@@ -75,7 +75,6 @@ export interface WorkspaceInfo {
   baseSha: string;
   headSha: string;
   pr?: PRMeta;
-  openedAt: number;
 }
 
 /** A range of diff lines on one Side of one file, captured with its text (ADR-0003). */
