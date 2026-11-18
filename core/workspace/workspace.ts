@@ -197,6 +197,19 @@ export function createWorkspace(runner: Runner, cwd: string, opened?: WorkspaceI
     return toPrMeta(raw);
   }
 
+  /** Checks the PR's head out. `gh pr checkout` wants the head branch, which is
+   * gone once a merged PR's branch is deleted; GitHub still serves
+   * `refs/pull/N/head`, so that case fetches it and checks it out detached. */
+  async function checkoutPr(target: Target & { kind: "pr" }, pr: PRMeta): Promise<void> {
+    const argv = ["gh", "pr", "checkout", String(pr.number), ...repoFlag(target)];
+    const res = await run(argv, { timeoutMs: SLOW_MS, ok: [1] });
+    if (res.exitCode === 0) return;
+    if (!/couldn't find remote ref/i.test(res.stderr)) throw failure(argv, res);
+    const remote = target.owner === undefined ? "origin" : `https://github.com/${pr.owner}/${pr.repo}.git`;
+    await git(["fetch", "--quiet", remote, `refs/pull/${pr.number}/head`], { timeoutMs: SLOW_MS });
+    await git(["checkout", "--quiet", "--detach", "FETCH_HEAD"]);
+  }
+
   async function open(target: Target, opts: OpenOptions = {}): Promise<WorkspaceInfo> {
     root = await out(["rev-parse", "--show-toplevel"], { cwd });
     let kind: WorkspaceInfo["kind"];
@@ -206,7 +219,7 @@ export function createWorkspace(runner: Runner, cwd: string, opened?: WorkspaceI
     if (target.kind === "pr") {
       pr = await viewPr(target);
       await ensureCleanFor(pr.headRefName);
-      await run(["gh", "pr", "checkout", String(pr.number), ...repoFlag(target)], { timeoutMs: SLOW_MS });
+      await checkoutPr(target, pr);
       await git(["fetch", "--quiet", "origin", pr.baseRefName], { timeoutMs: SLOW_MS });
       baseRef = opts.baseRef ?? `origin/${pr.baseRefName}`;
       kind = "pr";

@@ -207,6 +207,22 @@ test("pull request target: gh pr view, checkout in place, fetch of the base bran
   assert.ok(again.some((c) => c[2] === "view" && c.includes("--repo") && c.includes("acme/widgets")));
 });
 
+test("a merged pull request whose branch is gone is fetched from refs/pull/N/head", async () => {
+  const { work } = await makeRepos();
+  const origin = await sh(work, "git", "remote", "get-url", "origin");
+  await sh(origin, "git", "update-ref", "refs/pull/7/head", "feature");
+  await sh(origin, "git", "branch", "--delete", "--force", "feature");
+  const calls: string[][] = [];
+  const runner = withGh(async (argv) => {
+    if (argv[2] === "view") return { exitCode: 0, stdout: PR_JSON, stderr: "" };
+    return { exitCode: 1, stdout: "", stderr: "fatal: couldn't find remote ref refs/heads/feature\nfailed to run git: exit status 128" };
+  }, calls);
+  const info = await createWorkspace(runner, work).open({ kind: "pr", number: 7 });
+  assert.equal(info.headSha, await sh(origin, "git", "rev-parse", "refs/pull/7/head"));
+  assert.equal(await sh(work, "git", "rev-parse", "--abbrev-ref", "HEAD"), "HEAD");
+  assert.ok(calls.some((c) => c[0] === "git" && c.includes("fetch") && c.includes("origin") && c.includes("refs/pull/7/head")));
+});
+
 test("a dirty tree on another branch blocks a pull request checkout", async () => {
   const { work } = await makeRepos();
   writeFileSync(join(work, "a.txt"), "dirty\n");
