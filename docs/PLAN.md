@@ -89,17 +89,16 @@ Why: the engine loads the hooks module and every file it imports, and bundles no
 Interface:
 
 ```ts
-createWorkspace(runner: Runner, cwd: string): Workspace
+createWorkspace(runner: Runner, cwd: string, opened?: WorkspaceInfo): Workspace   // `opened` resumes after a reload
 
-open(target: string, opts?: { baseRef?: string }): Promise<WorkspaceInfo>
+open(target: Target, opts?: { baseRef?: string }): Promise<WorkspaceInfo>
 diff(): Promise<Diff>                                   // always fresh, dirty flags set
-fileContent(path: string, side: Side): Promise<string | null>
 revert(path: string): Promise<void>                     // Dirty Files only
 ```
 
 What a caller must know beyond the signatures:
 
-- `cwd` is the session's working directory and must be inside a git repository with a GitHub remote for PR targets. `target` is a PR number, PR URL, `owner/repo#n` of that repository, a branch name, or `.` for the working tree against `baseRef`.
+- `cwd` is the session's working directory and must be inside a git repository with a GitHub remote for PR targets. `target` is the parsed form (`core/workspace/target.ts`) of a PR number, PR URL, `owner/repo#n` of that repository, a branch name, or `.` for the working tree against `baseRef`. `fileContent` from the earlier plan is gone: nothing in v1 reads a whole file.
 - `open` of a PR checks the PR branch out in place. It refuses with `DirtyCheckout` when the working tree has uncommitted changes and a different branch is checked out; reopening the PR that is already checked out fetches and fast-forwards.
 - Base is `git merge-base origin/<baseRefName> HEAD` after a fetch; for `.` it is the merge-base of `baseRef` (default `origin/HEAD`, then `main`, then `master`) and HEAD.
 - `diff` compares the working tree to Base, so Edits and uncommitted work are always included; untracked files are synthesised as added File Changes. Never cached.
@@ -184,8 +183,8 @@ What the engine gives for free and the mod must not reimplement: wheel and key s
 ### 4.6 Commands
 
 ```
-/explore [number | url | owner/repo#n | branch]   open the PR or branch (no argument: the last one in this repository)
-/explore . [base]                                 working tree against base (default origin/HEAD)
+/explore <number | url | owner/repo#n | branch> [base]   open the PR or branch; Phase 4 adds the no-argument form (the last one in this repository)
+/explore . [base]                                        working tree against base (default origin/HEAD, then main, then master)
 /add                                              add the current terminal selection to the Basket
 /ref path:from-to [old]                           add a typed range
 /refs                                             list the Basket in the transcript
@@ -231,8 +230,7 @@ Each bullet that ends with a commit message is one local commit, made as soon as
 ### Phase 1: Workspace (1 day)
 
 - Parser fixture tests, fix what they find; `patchRenderer` with the round-trip test. `test: diff parser fixtures and patch renderer`
-- Runner port with the Node adapter; Workspace for `.` targets: merge-base, diff with dirty flags and untracked synthesis, fileContent, revert; temp-repository tests. `feat: workspace over a runner port`
-- PR targets through `gh`, the error cases, the scripted `gh` fake. `feat: open pull requests in place via gh`
+- Runner port with the Node adapter; Workspace for `.` and branch targets: merge-base, diff with dirty flags and untracked synthesis, revert; PR targets through `gh` with the error cases and a scripted `gh` fake; temp-repository tests. `feat: workspace over a runner port, with pull requests via gh`
 - `hooks/runner.ts`, `/explore` filling state, status line while running, file list with counts in the pane. `feat: open a pr from the session`
 
 ### Phase 2: diff pane (1 day)
