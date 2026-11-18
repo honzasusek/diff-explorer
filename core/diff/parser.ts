@@ -1,4 +1,4 @@
-import type { Diff, DiffFile, DiffLine, Hunk } from "../shared/types";
+import type { Diff, DiffFile, DiffLine, Hunk } from "../types.ts";
 
 const HUNK_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@ ?(.*)$/;
 
@@ -25,7 +25,7 @@ function parseDiffGitLine(line: string): { a: string; b: string } {
   if (rest.startsWith('"')) {
     // "a/x" "b/y"
     const m = /^("(?:[^"\\]|\\.)*") ("(?:[^"\\]|\\.)*")$/.exec(rest);
-    if (m) return { a: stripPrefix(m[1]) ?? "", b: stripPrefix(m[2]) ?? "" };
+    if (m) return { a: stripPrefix(m[1] ?? "") ?? "", b: stripPrefix(m[2] ?? "") ?? "" };
   }
   // Find a split " b/" where both halves are the same path (common case); otherwise take the first.
   let first: { a: string; b: string } | null = null;
@@ -48,8 +48,9 @@ export function parseUnifiedDiff(text: string): DiffFile[] {
   const lines = text.split("\n");
   const files: DiffFile[] = [];
   let i = 0;
+  const at = (n: number): string => lines[n] ?? "";
   while (i < lines.length) {
-    const line = lines[i];
+    const line = at(i);
     if (!line.startsWith("diff --git ")) {
       i++;
       continue;
@@ -68,8 +69,8 @@ export function parseUnifiedDiff(text: string): DiffFile[] {
     };
     i++;
     // Extended header lines.
-    while (i < lines.length && !lines[i].startsWith("diff --git ")) {
-      const l = lines[i];
+    while (i < lines.length && !at(i).startsWith("diff --git ")) {
+      const l = at(i);
       if (l.startsWith("--- ")) {
         file.oldPath = stripPrefix(l.slice(4));
       } else if (l.startsWith("+++ ")) {
@@ -107,8 +108,8 @@ export function parseUnifiedDiff(text: string): DiffFile[] {
     let newRemaining = 0;
     let oldNo = 0;
     let newNo = 0;
-    while (i < lines.length && !lines[i].startsWith("diff --git ")) {
-      const l = lines[i];
+    while (i < lines.length && !at(i).startsWith("diff --git ")) {
+      const l = at(i);
       const hm = HUNK_RE.exec(l);
       if (hm) {
         hunk = {
