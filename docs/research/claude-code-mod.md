@@ -47,11 +47,15 @@ Source: the type declarations Claude Code 2.1.319 writes when the plugin-authori
 - `Input` is terminal-only; typed refs go through a command and the prompt typeahead.
 - Hot reload only in an interactive session that was given the folder.
 
-## Open questions for the Phase 2 spike
+## Spike findings (2026-11-18)
 
-1. Does `Code format="diff"` accept a single hunk (the `@@` line plus its lines) without the `diff --git`, `---` and `+++` headers? The plan renders one `Code` per hunk.
-2. Does a column of one-row `plain` `Button`s in a row `Box` beside a `Code` with `wrap: 'truncate-end'` stay aligned row for row, including the hunk header row?
-3. What does `$.ui.selection().text` contain for a drag inside a `Code format="diff"`: the gutter numbers and markers too, or the code only?
-4. How many characters does a 3,000-line PR come to, and does windowing to `scroll.offset ± 2 × bodyRows` keep each drawing under 100,000 with no visible gap while scrolling?
-5. Does `$.ui.scroll({ in: 'diff', to: <key> })` land on a keyed `Box` inside a windowed tree whose target is not yet drawn, or must the window be moved first?
-6. At 100 and at 130 columns in a fullscreen terminal: where does the pane sit and how many `bodyColumns` does it get?
+Measured on Claude Code 2.1.327 with a throwaway mod that drew the hunks of honojs/hono#5541 (26 files, +2,303 −223, 82 hunks, 3,106 diff lines) in a pane, driven in a pseudo-terminal at 100, 130 and 160 columns. The script and the mod lived in the session's scratchpad; the numbers below are what they reported.
+
+1. **One hunk per `Code` works.** A `Code format="diff"` whose source is a single `@@` hunk with no `diff --git`, `---` or `+++` lines is drawn as a diff: one row per line, a single gutter number (the old number on `-` lines, the new one elsewhere), the marker, then the code. The engine draws **no `@@` row**, so the hunk header row is the mod's own, and a hunk takes exactly `lines.length` rows.
+2. **Gutter buttons align.** A column `Box` of one-row `plain` `Button`s beside a `Code` with `wrap: 'truncate-end'` lines up row for row; a click on the label `3` pressed the button with index 2. A `plain` Button draws its label alone, padding kept.
+3. **`$.ui.selection().text` is the code only.** A drag inside a diff `Code`, started on the gutter or mid-line, answers the selected lines' content joined with newlines: no gutter numbers, no `+`/`-` markers, the line's own leading whitespace kept. `requestId` is absent for a pane. So `locate` matches by content.
+4. **The budget needs windowing.** The 82 hunks come to 115,296 characters (36 per row on average, the largest hunk 24,083, the largest file patch 50,529, the longest line 322), over the 100,000 a drawing may hold. Drawing the hunks inside `offset − 2 × bodyRows .. offset + 3 × bodyRows` and a sized placeholder for the rest came to 3,443 characters at the top and at most 22,199 characters per drawing while jumping around, with no visible gap: the engine asks for a new drawing on every wheel tick (`ui.scroll`, `by: 1`, origin `person`) and the window follows.
+5. **Scroll-to-key works on a placeholder.** `$.ui.scroll({ in, to: { key }, block: 'start' })` resolved `{}` and moved the window to a keyed `Box` that stood in for an undrawn hunk; the drawing that followed put the real hunk on the same rows. This holds only while the tree's row count is exact: every header `Text` is `wrap: 'truncate-end'` (one row), and a placeholder `Box` has `height` equal to the rows it replaces. With that, `contentRows` equalled the mod's own count (3,264) at every scroll.
+6. **Where the pane sits.** In a fullscreen terminal: 100 columns → `inline` above the prompt, `bodyColumns` 96, `bodyRows` 11 of 40 (a third, less the frame); 130 columns → `dock`, `bodyColumns` 57, the transcript 72 wide, `bodyRows` 33 of 40; 160 columns → `dock`, `bodyColumns` 71, the transcript 88, `bodyRows` 38 of 45. A `columns` request on `$.ui.open` is capped at 45% of the terminal, so asking for more than that gives the cap. `e.viewport.columns` is the transcript's width, not the terminal's; `presentation.columns` on `command.run` is the terminal's.
+
+Also seen: `focus: true` on `$.ui.open` gives the pane the keys at once, so hotkeys work right after the command; the terminal enables SGR mouse tracking (modes 1000, 1002, 1003, 1006), which is how the engine sees drags and wheel ticks; and a merged PR's branch is usually deleted, so `gh pr checkout` fails on it (fixed in the Workspace with a `refs/pull/N/head` fetch).

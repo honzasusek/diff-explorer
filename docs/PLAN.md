@@ -164,8 +164,9 @@ Tree, top to bottom, all engine elements (`Box`, `Text`, `Button`, `Code`):
 
 - A file list: one row per File Change with status, counts, dirty dot, and a fold toggle; pressing a row scrolls to the file via `$.ui.scroll({ in: 'diff', to: <file key> })`.
 - Per File Change, a header `Box` keyed by path: path, status, counts, `[+file]` (`captureFile`), `[fold]`.
-- Per Hunk, a header row with the `@@` text and `[+hunk]` (`captureHunk`), then a `Code` with `format: 'diff'`, `source: renderHunk(file, hunk)`, `path: file.path`, `wrap: 'truncate-end'`, and beside it a column of `plain` `Button`s, one per row, labelled with the line number. The spike decides whether that column aligns row for row with the `Code`; if not, the gutter buttons are dropped and selection is by drag and by typed refs.
-- Files over the fold threshold (default 1,500 changed lines) start folded. The hook renders the hunks whose rows fall inside `scroll.offset ± 2 × bodyRows` and a one-line placeholder for the rest, so a drawing stays under 100,000 characters for any PR size. The engine asks again on every scroll, so the window follows the reader.
+- Per Hunk, a header row with the `@@` text and `[+hunk]` (`captureHunk`), then a `Code` with `format: 'diff'`, `source: renderHunk(hunk)`, `path: file.path`, `wrap: 'truncate-end'`, and beside it a column of `plain` `Button`s, one per row, labelled with the line number. The engine draws no `@@` row of its own, so a hunk takes exactly one row per line and the spike showed the column aligns row for row (research note, finding 2).
+- Files over the fold threshold (default 1,500 changed lines) start folded. The hook renders the hunks whose rows fall inside `scroll.offset − 2 × bodyRows .. + 3 × bodyRows` and, for the rest, a keyed `Box` whose `height` is the hunk's row count, so the tree's rows never change, `$.ui.scroll` to a key lands exactly even on an undrawn hunk, and a drawing stays under 100,000 characters for any PR size (the spike's 3,100-line PR drew at most 22,000). Every header `Text` is `wrap: 'truncate-end'` so it stays one row. The engine asks again on every scroll, so the window follows the reader.
+- A drag's `$.ui.selection().text` is the code only, without gutter numbers or markers, so `locate` matches by content.
 
 Selection, from the reviewer's side:
 
@@ -277,7 +278,7 @@ Web layer as in appendix A. Review comments via `gh api` behind an explicit conf
 - **100,000 characters per drawing.** Windowing by `scroll.offset` and folding keep any PR under it; the spike measures a 3,000-line PR before the pane depends on it.
 - **Gutter buttons may not align with `Code` rows.** Then selection is drag plus `/add`, hunk and file buttons, and typed refs, which already cover every case; the two-click path is a convenience.
 - **The shape of selected text is unverified.** `locateText` handles rows with and without a gutter prefix; the spike confirms which it is.
-- **Pane placement.** Docked from 110 columns in a fullscreen terminal, inline above the prompt otherwise. Inline works but the pane competes with the transcript for rows; `userConfig` sets its rows.
+- **Pane placement.** Docked from 110 columns in a fullscreen terminal, inline above the prompt otherwise. The dock is capped at 45% of the terminal: 57 body columns at 130, 71 at 160 (research note, finding 6), so long lines are truncated and the reader widens the dock by hand. Inline works but the pane competes with the transcript for rows; `userConfig` sets its rows.
 - **`$.process.run` limits.** 4 MiB per stream and a 30-second default timeout: per-file diffs past the cap, `timeoutMs` on fetches.
 - **Hot reload needs an interactive session.** Development runs `claude --plugin-dir .` in a second terminal; `claude -p` and SDK hosts load the folder without reloading.
 - **Redraw cost.** The whole pane tree is rebuilt on each state change; windowing bounds it, and the Phase 5 pass measures it.
