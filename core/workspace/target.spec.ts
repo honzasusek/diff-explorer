@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { describeTarget, parseTarget } from "./target.ts";
 
-test("parses the forms /pr accepts", () => {
+test("parses the forms /explore accepts", () => {
   assert.deepEqual(parseTarget("412"), { kind: "pr", number: 412 });
   assert.deepEqual(parseTarget(" #412 "), { kind: "pr", number: 412 });
   assert.deepEqual(parseTarget("https://github.com/strvcom/some-repo/pull/412"), {

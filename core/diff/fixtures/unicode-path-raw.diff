@@ -1,0 +1,14 @@
+diff --git a/café file.txt b/café file.txt
+index 9fb2114..5ea2ed4 100644
+--- a/café file.txt	
++++ b/café file.txt	
+@@ -1 +1 @@
+-café content
++changed
+diff --git a/has space.txt b/has space.txt
+index bd4269f..c90ac6e 100644
+--- a/has space.txt	
++++ b/has space.txt	
+@@ -1 +1 @@
+-spaced
++spaced changed

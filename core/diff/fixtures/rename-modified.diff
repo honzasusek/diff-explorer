@@ -1,0 +1,12 @@
+diff --git a/moved-src.txt b/moved-dst.txt
+similarity index 61%
+rename from moved-src.txt
+rename to moved-dst.txt
+index c923488..2b3eefc 100644
+--- a/moved-src.txt
++++ b/moved-dst.txt
+@@ -2,3 +2,4 @@ keep
+ more
+ lines
+ here
++and one more

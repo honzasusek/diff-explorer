@@ -3,6 +3,6 @@
   "compilerOptions": {
     "types": ["node"]
   },
-  "include": ["core/**/*.spec.ts", "node/**/*.ts"],
+  "include": ["core/**/*.spec.ts", "core/testing/**/*.ts", "node/**/*.ts"],
   "exclude": []
 }

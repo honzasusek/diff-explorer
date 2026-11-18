@@ -2,6 +2,7 @@
 // runs under the mod loader, under Node and behind a web layer alike. Core
 // tests are *.spec.ts (node --test); *.test.ts files are the mod's, run by
 // `claude plugin test`, which picks up every *.test.ts under the folder.
+// core/testing/ holds test support and is outside the rule too.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -13,7 +14,7 @@ const root = dirname(fileURLToPath(import.meta.url));
 function sources(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
     const full = join(dir, name);
-    if (statSync(full).isDirectory()) return sources(full);
+    if (statSync(full).isDirectory()) return name === "testing" && dir === root ? [] : sources(full);
     return full.endsWith(".ts") && !full.endsWith(".spec.ts") ? [full] : [];
   });
 }

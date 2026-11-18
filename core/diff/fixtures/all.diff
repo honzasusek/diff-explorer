@@ -1,0 +1,75 @@
+diff --git a/café file.txt b/café file.txt
+index 9fb2114..5ea2ed4 100644
+--- a/café file.txt	
++++ b/café file.txt	
+@@ -1 +1 @@
+-café content
++changed
+diff --git a/copy-src.txt b/copy-dst.txt
+similarity index 100%
+copy from copy-src.txt
+copy to copy-dst.txt
+diff --git a/deleted.txt b/deleted.txt
+deleted file mode 100644
+index 286c5f5..0000000
+--- a/deleted.txt
++++ /dev/null
+@@ -1 +0,0 @@
+-gone
+diff --git a/empty.txt b/empty.txt
+new file mode 100644
+index 0000000..e69de29
+diff --git a/has space.txt b/has space.txt
+index bd4269f..c90ac6e 100644
+--- a/has space.txt	
++++ b/has space.txt	
+@@ -1 +1 @@
+-spaced
++spaced changed
+diff --git a/image.png b/image.png
+new file mode 100644
+index 0000000..b437676
+Binary files /dev/null and b/image.png differ
+diff --git a/moved-src.txt b/moved-dst.txt
+similarity index 61%
+rename from moved-src.txt
+rename to moved-dst.txt
+index c923488..2b3eefc 100644
+--- a/moved-src.txt
++++ b/moved-dst.txt
+@@ -2,3 +2,4 @@ keep
+ more
+ lines
+ here
++and one more
+diff --git a/multi.txt b/multi.txt
+index a82bf91..5b24900 100644
+--- a/multi.txt
++++ b/multi.txt
+@@ -1,5 +1,5 @@
+ line1
+-line2
++line2 changed
+ line3
+ line4
+ line5
+@@ -8,5 +8,5 @@ line7
+ line8
+ line9
+ line10
+-line11
++line11 changed
+ line12
+diff --git a/nonl.txt b/nonl.txt
+index 20cbb4d..0ba6e66 100644
+--- a/nonl.txt
++++ b/nonl.txt
+@@ -1 +1 @@
+-no newline
+\ No newline at end of file
++no newline changed
+\ No newline at end of file
+diff --git a/renamed-src.txt b/renamed-dst.txt
+similarity index 100%
+rename from renamed-src.txt
+rename to renamed-dst.txt

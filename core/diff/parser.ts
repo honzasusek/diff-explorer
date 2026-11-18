@@ -1,43 +1,137 @@
 import type { Diff, DiffFile, DiffLine, Hunk } from "../types.ts";
 
 const HUNK_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@ ?(.*)$/;
+const OCTAL_RE = /^[0-7]{1,3}/;
+const SIMPLE_ESCAPES: Record<string, string> = {
+  n: "\n",
+  t: "\t",
+  r: "\r",
+  a: "\x07",
+  b: "\b",
+  f: "\f",
+  v: "\v",
+  "\\": "\\",
+  '"': '"',
+};
 
-function unquote(s: string): string {
-  if (s.startsWith('"') && s.endsWith('"') && s.length >= 2) {
-    try {
-      return JSON.parse(s);
-    } catch {
-      return s.slice(1, -1);
+/** Decodes UTF-8 bytes without TextDecoder, which core cannot assume. */
+function decodeUtf8(bytes: number[]): string {
+  let out = "";
+  let i = 0;
+  while (i < bytes.length) {
+    const b0 = bytes[i] ?? 0;
+    let cp: number;
+    let n: number;
+    if (b0 < 0x80) {
+      cp = b0;
+      n = 1;
+    } else if ((b0 & 0xe0) === 0xc0) {
+      cp = b0 & 0x1f;
+      n = 2;
+    } else if ((b0 & 0xf0) === 0xe0) {
+      cp = b0 & 0x0f;
+      n = 3;
+    } else if ((b0 & 0xf8) === 0xf0) {
+      cp = b0 & 0x07;
+      n = 4;
+    } else {
+      out += "�";
+      i++;
+      continue;
     }
+    if (i + n > bytes.length) {
+      out += "�";
+      break;
+    }
+    for (let k = 1; k < n; k++) cp = (cp << 6) | ((bytes[i + k] ?? 0) & 0x3f);
+    out += String.fromCodePoint(cp);
+    i += n;
   }
-  return s;
+  return out;
 }
 
-/** Strips the a/ or b/ prefix git puts in front of paths. */
+/** Undoes git's C-style path quoting: "caf\303\251 \"x\".txt" -> café "x".txt */
+export function cUnquote(s: string): string {
+  if (!(s.startsWith('"') && s.endsWith('"') && s.length >= 2)) return s;
+  const inner = s.slice(1, -1);
+  let out = "";
+  let bytes: number[] = [];
+  const flush = (): void => {
+    if (bytes.length > 0) {
+      out += decodeUtf8(bytes);
+      bytes = [];
+    }
+  };
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i] ?? "";
+    if (ch !== "\\") {
+      flush();
+      out += ch;
+      continue;
+    }
+    const octal = OCTAL_RE.exec(inner.slice(i + 1));
+    if (octal) {
+      bytes.push(parseInt(octal[0], 8));
+      i += octal[0].length;
+      continue;
+    }
+    flush();
+    const next = inner[i + 1] ?? "";
+    out += SIMPLE_ESCAPES[next] ?? next;
+    i += 1;
+  }
+  flush();
+  return out;
+}
+
+/** Reads a quoted token starting at `start`; returns the raw token and where it ends. */
+function readQuoted(s: string, start: number): { raw: string; end: number } | null {
+  if (s[start] !== '"') return null;
+  for (let i = start + 1; i < s.length; i++) {
+    if (s[i] === "\\") {
+      i++;
+      continue;
+    }
+    if (s[i] === '"') return { raw: s.slice(start, i + 1), end: i + 1 };
+  }
+  return null;
+}
+
+/** Unquotes and strips the a/ or b/ prefix git puts in front of paths; /dev/null is null. */
 function stripPrefix(p: string): string | null {
   if (p === "/dev/null") return null;
-  const u = unquote(p);
-  return u.replace(/^[ab]\//, "");
+  return cUnquote(p).replace(/^[ab]\//, "");
+}
+
+/** The path on a `--- ` or `+++ ` line: git appends a tab when the path has spaces. */
+function headerPath(rest: string): string | null {
+  return stripPrefix(rest.replace(/\t$/, ""));
 }
 
 function parseDiffGitLine(line: string): { a: string; b: string } {
   const rest = line.slice("diff --git ".length);
-  if (rest.startsWith('"')) {
-    // "a/x" "b/y"
-    const m = /^("(?:[^"\\]|\\.)*") ("(?:[^"\\]|\\.)*")$/.exec(rest);
-    if (m) return { a: stripPrefix(m[1] ?? "") ?? "", b: stripPrefix(m[2] ?? "") ?? "" };
+  const first = readQuoted(rest, 0);
+  if (first) {
+    const after = rest.slice(first.end).replace(/^ /, "");
+    const second = readQuoted(after, 0);
+    return { a: stripPrefix(first.raw) ?? "", b: stripPrefix(second ? second.raw : after) ?? "" };
   }
-  // Find a split " b/" where both halves are the same path (common case); otherwise take the first.
-  let first: { a: string; b: string } | null = null;
+  const quotedSecond = rest.indexOf(' "');
+  if (quotedSecond >= 0) {
+    return { a: stripPrefix(rest.slice(0, quotedSecond)) ?? "", b: stripPrefix(rest.slice(quotedSecond + 1)) ?? "" };
+  }
+  // Unquoted paths may contain spaces: find a split " b/" where both halves
+  // are the same path (the common case); otherwise take the first split.
+  let firstSplit: { a: string; b: string } | null = null;
   let idx = rest.indexOf(" b/");
   while (idx >= 0) {
     const a = rest.slice(2, idx);
     const b = rest.slice(idx + 3);
-    if (!first) first = { a, b };
+    if (!firstSplit) firstSplit = { a, b };
     if (a === b) return { a, b };
     idx = rest.indexOf(" b/", idx + 1);
   }
-  return first ?? { a: rest, b: rest };
+  return firstSplit ?? { a: rest, b: rest };
 }
 
 export function fileId(path: string): string {
@@ -72,9 +166,9 @@ export function parseUnifiedDiff(text: string): DiffFile[] {
     while (i < lines.length && !at(i).startsWith("diff --git ")) {
       const l = at(i);
       if (l.startsWith("--- ")) {
-        file.oldPath = stripPrefix(l.slice(4));
+        file.oldPath = headerPath(l.slice(4));
       } else if (l.startsWith("+++ ")) {
-        file.newPath = stripPrefix(l.slice(4));
+        file.newPath = headerPath(l.slice(4));
         i++;
         break;
       } else if (l.startsWith("new file mode")) {
@@ -83,14 +177,14 @@ export function parseUnifiedDiff(text: string): DiffFile[] {
         file.status = "deleted";
       } else if (l.startsWith("rename from ")) {
         file.status = "renamed";
-        file.oldPath = unquote(l.slice("rename from ".length));
+        file.oldPath = cUnquote(l.slice("rename from ".length));
       } else if (l.startsWith("rename to ")) {
-        file.newPath = unquote(l.slice("rename to ".length));
+        file.newPath = cUnquote(l.slice("rename to ".length));
       } else if (l.startsWith("copy from ")) {
         file.status = "copied";
-        file.oldPath = unquote(l.slice("copy from ".length));
+        file.oldPath = cUnquote(l.slice("copy from ".length));
       } else if (l.startsWith("copy to ")) {
-        file.newPath = unquote(l.slice("copy to ".length));
+        file.newPath = cUnquote(l.slice("copy to ".length));
       } else if (l.startsWith("Binary files") || l.startsWith("GIT binary patch")) {
         file.binary = true;
       } else if (HUNK_RE.test(l)) {
@@ -101,6 +195,9 @@ export function parseUnifiedDiff(text: string): DiffFile[] {
     }
     if (file.oldPath === null && file.status === "modified") file.status = "added";
     if (file.newPath === null && file.status === "modified") file.status = "deleted";
+    // The `diff --git` line names both sides even when one does not exist.
+    if (file.status === "added") file.oldPath = null;
+    if (file.status === "deleted") file.newPath = null;
 
     // Hunks.
     let hunk: Hunk | null = null;

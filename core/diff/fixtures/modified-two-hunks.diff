@@ -1,0 +1,18 @@
+diff --git a/multi.txt b/multi.txt
+index a82bf91..5b24900 100644
+--- a/multi.txt
++++ b/multi.txt
+@@ -1,5 +1,5 @@
+ line1
+-line2
++line2 changed
+ line3
+ line4
+ line5
+@@ -8,5 +8,5 @@ line7
+ line8
+ line9
+ line10
+-line11
++line11 changed
+ line12
