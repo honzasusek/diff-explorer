@@ -1,5 +1,7 @@
 // The core rule (ADR-0004, ADR-0006): core/ imports only its own files, so it
-// runs under the mod loader, under Node and behind a web layer alike.
+// runs under the mod loader, under Node and behind a web layer alike. Core
+// tests are *.spec.ts (node --test); *.test.ts files are the mod's, run by
+// `claude plugin test`, which picks up every *.test.ts under the folder.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -12,7 +14,7 @@ function sources(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
     const full = join(dir, name);
     if (statSync(full).isDirectory()) return sources(full);
-    return full.endsWith(".ts") && !full.endsWith(".test.ts") ? [full] : [];
+    return full.endsWith(".ts") && !full.endsWith(".spec.ts") ? [full] : [];
   });
 }
 

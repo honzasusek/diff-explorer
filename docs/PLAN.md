@@ -4,7 +4,7 @@ Vocabulary: [GLOSSARY.md](../GLOSSARY.md). Decisions: [docs/adr](./adr), this pl
 
 ## 1. Goal and scope
 
-**v1 is a Claude Code mod**: a plugin whose hooks module adds a diff pane, a Code Ref Basket and a few slash commands to an ordinary Claude Code session. The reviewer starts Claude Code in the repository, runs `/pr 412`, reads the Diff in a pane docked beside the transcript, picks lines into Code Refs, and asks about them in the normal prompt. Claude answers in the transcript with its own tools, permissions, cost tracking and session resume. When Claude edits a file the pane refreshes and Dirty Files are marked; any Dirty File can be reverted.
+**v1 is a Claude Code mod**: a plugin whose hooks module adds a diff pane, a Code Ref Basket and a few slash commands to an ordinary Claude Code session. The reviewer starts Claude Code in the repository, runs `/explore 412`, reads the Diff in a pane docked beside the transcript, picks lines into Code Refs, and asks about them in the normal prompt. Claude answers in the transcript with its own tools, permissions, cost tracking and session resume. When Claude edits a file the pane refreshes and Dirty Files are marked; any Dirty File can be reverted.
 
 **Everything the product knows lives in `core/`**, plain TypeScript with no dependency on the engine, Node or a UI, so the same code can back the parked terminal app or a web layer later (ADR-0004, appendix A).
 
@@ -14,14 +14,14 @@ Vocabulary: [GLOSSARY.md](../GLOSSARY.md). Decisions: [docs/adr](./adr), this pl
 
 ```
 $ cd ~/work/some-repo && claude
-> /pr 412
+> /explore 412
 ```
 
 The mod checks the PR branch out in place (`gh pr checkout`), computes the Diff against the merge-base, and opens the pane. The status line shows fetching, checking out, diffing. From 110 columns in a fullscreen terminal the pane docks beside the transcript; narrower, it sits above the prompt.
 
 ```
 ┌ claude ──────────────────────────────────┬ diff · PR #412 · 6 files ────────────────────┐
-│ > /pr 412                                │ ▸ src/payments/client.ts  M +61 −12  [+file] │
+│ > /explore 412                                │ ▸ src/payments/client.ts  M +61 −12  [+file] │
 │ Checked out feature/retry (6 files,      │   @@ -40,7 +40,22 @@ charge()        [+hunk] │
 │ +184 −37 against main)                   │   40  40    const res = await fetch(url…     │
 │                                          │   41     -  if (!res.ok) throw new Error(    │
@@ -39,7 +39,7 @@ The mod checks the PR branch out in place (`gh pr checkout`), computes the Diff 
 2. **Select.** Three ways, detailed in 4.5: drag across lines in the pane (ordinary terminal text selection) and press `[add selection]` or type `/add`; click a first and a last line number in the gutter; or type `#client.ts:41-43` in the prompt, with typeahead after `#`. `[+hunk]` and `[+file]` take a whole Hunk or File Change. Each Code Ref appears as a chip in the band above the prompt; `[x]` drops it; pressing a chip scrolls the pane to its lines.
 3. **Ask.** Type in the normal prompt and press Enter. The mod appends the Basket as `code_ref` blocks to the message, so Claude sees the quoted lines with numbers and markers. The Basket empties after sending. The reply, tool calls, permission prompts and cost are Claude Code's own.
 4. **Edit.** Ask for a change; Claude's Edit asks for permission as it always does. After each Edit or Write the Diff is recomputed, the file gets a dirty marker in the pane, and any chip whose lines no longer match is marked stale. `/revert <path>` restores a Dirty File after a confirmation.
-5. **Come back.** `claude --resume` brings the Conversation back; the mod reopens the pane for the PR recorded for that repository and recomputes the Diff. `/pr` with no argument reopens the last PR in this repository.
+5. **Come back.** `claude --resume` brings the Conversation back; the mod reopens the pane for the PR recorded for that repository and recomputes the Diff. `/explore` with no argument reopens the last PR in this repository.
 
 ## 3. What already exists
 
@@ -138,7 +138,7 @@ A `new`-side ref holds add and context lines numbered on the new Side; an `old`-
 | `register.tsx` | `export const register: Register` | which event is hooked with which matcher; nothing else |
 | `state.ts` | atoms: `review` (target, `WorkspaceInfo`), `basket`, `anchor`, `folded`, `stale`; a module-level `diff` cache | `$.state` keys declared in `types/index.d.ts`; the Diff itself stays in a module variable and is recomputed on load because the state store is for small values |
 | `runner.ts` | `Runner` over `$.process.run` | `cwd` from `$.session.cwd()`, `timeoutMs` for fetches, mapping of exit codes to Workspace errors |
-| `commands.ts` | handlers for `/pr`, `/diff`, `/add`, `/ref`, `/refs`, `/clear`, `/revert` | argument parsing, toasts and status text, confirmation for revert |
+| `commands.ts` | handlers for `/explore`, `/add`, `/ref`, `/refs`, `/revert` | argument parsing, toasts and status text, confirmation for revert |
 | `pane.tsx` | `ui.render` for `{ component: 'Pane', requestId: 'diff' }` | the tree in 4.5; windowing by `scroll.offset` and `bodyRows`; the 100,000-character budget per drawing |
 | `band.tsx` | `ui.render` for `{ component: 'AbovePrompt' }` | chips, `[add selection]`, `[clear]`; `next(e)` when there is nothing to show |
 | `types/index.d.ts` | the `PluginState` contract | |
@@ -157,7 +157,7 @@ Events, each a one-line hook over a core call:
 | `prompt.submit` | | appends `renderRefs(basket)` to `e.text` when the Basket is not empty, then clears it once `next` resolves |
 | `prompt.compose` | | appends one `session` section: PR title, `base...head`, the file list with counts, how `code_ref` blocks are formatted, never commit or push |
 | `tool.call` | `tool: Edit, Write, MultiEdit, NotebookEdit` | `await next(e)`, then `workspace.diff()`, `markStale`, redraw |
-| `ui.close` | `id: 'diff'` | keeps the review in state so `/pr` reopens it |
+| `ui.close` | `id: 'diff'` | keeps the review in state so `/explore` reopens it |
 
 ### 4.5 The pane and line selection
 
@@ -184,16 +184,16 @@ What the engine gives for free and the mod must not reimplement: wheel and key s
 ### 4.6 Commands
 
 ```
-/pr [number | url | owner/repo#n | branch]    open the PR (no argument: last one in this repository)
-/diff [base]                                  working tree against base (default origin/HEAD)
-/add                                          add the current terminal selection to the Basket
-/ref path:from-to [old]                       add a typed range
-/refs                                         list the Basket in the transcript
-/clear                                        empty the Basket
-/revert path                                  restore a Dirty File, after confirmation
+/explore [number | url | owner/repo#n | branch]   open the PR or branch (no argument: the last one in this repository)
+/explore . [base]                                 working tree against base (default origin/HEAD)
+/add                                              add the current terminal selection to the Basket
+/ref path:from-to [old]                           add a typed range
+/refs                                             list the Basket in the transcript
+/refs clear                                       empty the Basket
+/revert path                                      restore a Dirty File, after confirmation
 ```
 
-`/pr` and `/diff` report in the transcript ("Checked out feature/retry, 6 files, +184 −37 against main") and update the status line while running. Errors are toasts with the Workspace error name and a hint (`gh auth login`, commit or stash first).
+Names Claude Code already ships (`/pr`, `/diff`, `/review`, `/clear`) are refused at registration, which `claude plugin validate` reports, hence `/explore` and `/refs clear`. `/explore` reports in the transcript ("Checked out feature/retry, 6 files, +184 −37 against main") and update the status line while running. Errors are toasts with the Workspace error name and a hint (`gh auth login`, commit or stash first).
 
 ### 4.7 Surfaces
 
@@ -201,7 +201,7 @@ What the engine gives for free and the mod must not reimplement: wheel and key s
 
 ## 5. Testing strategy
 
-Two runners, each at its seam. Following the tdd skill: write the test at the module's interface first.
+Two runners, each at its seam: core tests are `*.spec.ts` under `node --test`, mod tests are `*.test.ts` because `claude plugin test` runs every file of that name under the folder. Following the tdd skill: write the test at the module's interface first.
 
 | Module | Runner | Test surface | Fixtures |
 |---|---|---|---|
@@ -226,14 +226,14 @@ Each bullet that ends with a commit message is one local commit, made as soon as
 - `git init`, commit the existing scaffold as-is. `chore: scaffold server, web and shared types`
 - Restructure into `core/` and `hooks/`; add `.claude-plugin/plugin.json`, `hooks/hooks.json`, `types/index.d.ts`; drop the web dependencies; `node --test` with `erasableSyntaxOnly`; the boundary test. `chore: restructure as a claude code mod with a pure core`
 - Docs: glossary, ADRs 0001 to 0006, research notes, this plan, the parked plan. `docs: mod plan, adr-0006 and parked cli plan`
-- Hello mod: `/pr` registers, opens an empty pane titled `diff`, and the band shows "no refs". `claude plugin validate .` passes, `tsc -p .` passes, and the mod loads in a session started with `claude --plugin-dir .` and hot-reloads on save. `feat: mod skeleton with pane and band`
+- Hello mod: `/explore` registers, opens an empty pane titled `diff`, and the band shows "no refs". `claude plugin validate .` passes, `tsc -p .` passes, and the mod loads in a session started with `claude --plugin-dir .` and hot-reloads on save. `feat: mod skeleton with pane and band`
 
 ### Phase 1: Workspace (1 day)
 
 - Parser fixture tests, fix what they find; `patchRenderer` with the round-trip test. `test: diff parser fixtures and patch renderer`
 - Runner port with the Node adapter; Workspace for `.` targets: merge-base, diff with dirty flags and untracked synthesis, fileContent, revert; temp-repository tests. `feat: workspace over a runner port`
 - PR targets through `gh`, the error cases, the scripted `gh` fake. `feat: open pull requests in place via gh`
-- `hooks/runner.ts`, `/pr` and `/diff` filling state, status line while running, file list with counts in the pane. `feat: open a pr from the session`
+- `hooks/runner.ts`, `/explore` filling state, status line while running, file list with counts in the pane. `feat: open a pr from the session`
 
 ### Phase 2: diff pane (1 day)
 
@@ -244,13 +244,13 @@ Each bullet that ends with a commit message is one local commit, made as soon as
 
 - `selection`, `refs`, `basket` in core, tests first. `feat: selection, refs and basket model`
 - `locate` with tests; `/add` and `[add selection]`; `[+hunk]` and `[+file]`; gutter buttons if the spike said yes. `feat: add selected lines to the basket`
-- Band with chips, `[x]`, scroll-to on press; `prompt.submit` appends the refs and clears the Basket; `/ref`, `/refs`, `/clear`. `feat: basket band and code refs in prompts`
+- Band with chips, `[x]`, scroll-to on press; `prompt.submit` appends the refs and clears the Basket; `/ref`, `/refs`, `/refs clear`. `feat: basket band and code refs in prompts`
 - `prompt.autocomplete` for `#path` and `#path:from-to`. `feat: ref typeahead in the prompt`
 
 ### Phase 4: edits and context (half a day)
 
 - `prompt.compose` review section. `feat: review context in the system prompt`
-- `tool.call` refresh after Edit and Write, stale marking, `/revert` with confirmation, `session.cwd`, `$.store` for `/pr` with no argument and for reopening on `session.start`. `feat: reflect claude edits in the diff`
+- `tool.call` refresh after Edit and Write, stale marking, `/revert` with confirmation, `session.cwd`, `$.store` for `/explore` with no argument and for reopening on `session.start`. `feat: reflect claude edits in the diff`
 
 ### Phase 5: polish (half a day to 1 day)
 
