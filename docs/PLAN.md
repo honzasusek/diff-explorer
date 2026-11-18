@@ -135,10 +135,10 @@ A `new`-side ref holds add and context lines numbered on the new Side; an `old`-
 | File | Interface it offers the rest of the mod | Hides |
 |---|---|---|
 | `register.tsx` | `export const register: Register` | which event is hooked with which matcher; nothing else |
-| `state.ts` | atoms: `review` (target, `WorkspaceInfo`), `basket`, `anchor`, `folded`, `stale`; a module-level `diff` cache | `$.state` keys declared in `types/index.d.ts`; the Diff itself stays in a module variable and is recomputed on load because the state store is for small values |
+| `state.ts` | the pane id and the module-level `diff` cache | The atoms (`review` with the target, `WorkspaceInfo`, the file list and folds; later `basket`, `anchor`, `stale`) live in `register.tsx`: the validator reads every `update`'s atom in the file that calls it, so an atom is not imported from elsewhere. `$.state` keys are declared in `types/index.d.ts`; the Diff itself stays in a module variable and is recomputed on load because the state store is for small values |
 | `runner.ts` | `Runner` over `$.process.run` | `cwd` from `$.session.cwd()`, `timeoutMs` for fetches, mapping of exit codes to Workspace errors |
 | `commands.ts` | handlers for `/explore`, `/add`, `/ref`, `/refs`, `/revert` | argument parsing, toasts and status text, confirmation for revert |
-| `pane.tsx` | `ui.render` for `{ component: 'Pane', requestId: 'diff' }` | the tree in 4.5; windowing by `scroll.offset` and `bodyRows`; the 100,000-character budget per drawing |
+| `pane.tsx` | `renderPane($, e, review, actions)`, called by the `ui.render` hook for `{ component: 'Pane', requestId: 'diff' }` in `register.tsx` | the tree in 4.5 over `core/diff/layout.ts`; windowing by `scroll.offset` and `bodyRows`; the 100,000-character budget per drawing; presses go back through `actions` (`scrollTo`, `toggleFold`) so the file only draws |
 | `band.tsx` | `ui.render` for `{ component: 'AbovePrompt' }` | chips, `[add selection]`, `[clear]`; `next(e)` when there is nothing to show |
 | `types/index.d.ts` | the `PluginState` contract | |
 

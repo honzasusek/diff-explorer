@@ -10,12 +10,16 @@ export type ReviewFileStatus = 'added' | 'deleted' | 'modified' | 'renamed' | 'c
 
 /** One File Change, as much of it as the pane's file list needs. */
 export type ReviewFile = {
+  /** The Diff's own id for the file, what the pane keys its elements by. */
+  id: string
   path: string
   status: ReviewFileStatus
   additions: number
   deletions: number
   binary: boolean
   dirty: boolean
+  /** Hunks hidden behind the header: large files start so, a press toggles it. */
+  folded: boolean
 }
 
 /** What a Workspace resolved: enough to recompute the Diff after a reload. */

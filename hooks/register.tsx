@@ -5,27 +5,22 @@ import type { Review, ReviewFile, ReviewInfo } from '../types'
 import type { Diff, WorkspaceInfo } from '../core/types.ts'
 import { describeTarget, parseTarget } from '../core/workspace/target.ts'
 import { createWorkspace } from '../core/workspace/workspace.ts'
+import { plural, renderPane } from './pane.tsx'
 import { engineRunner } from './runner.ts'
-
-const PANE = 'diff'
+import { PANE, diffCache } from './state.ts'
 
 // Bump the tag when Review's fields change: a reload keeps what the previous
 // version stored, and a different tag reads as the initial value instead.
+// The atom stays in this file: the validator reads every update's source here.
 const review = atom({ plugin: 'diff-explorer', key: 'review' } as const, null, {
-  shape: 'review-2',
+  shape: 'review-3',
 })
 
-// The parsed Diff is large and lives here, not in $.state. A reload empties
-// it; session.start recomputes it from the stored ReviewInfo.
-let cache: { key: string; diff: Diff } | null = null
+/** Changed lines from which a file starts folded in the pane. */
+const FOLD_THRESHOLD = 1500
 
-const BADGES: Record<ReviewFile['status'], string> = {
-  added: 'A',
-  deleted: 'D',
-  modified: 'M',
-  renamed: 'R',
-  copied: 'C',
-}
+/** Body columns to ask the dock for; the engine caps a dock at 45% of the terminal. */
+const PANE_COLUMNS = 80
 
 function toInfo(info: WorkspaceInfo): ReviewInfo {
   return {
@@ -53,23 +48,25 @@ function toWorkspaceInfo(info: ReviewInfo): WorkspaceInfo {
   }
 }
 
-function summarise(diff: Diff): ReviewFile[] {
+/** The file list for the state. A fold the person toggled survives a refresh;
+ * a file seen for the first time starts folded when it is large. */
+function summarise(diff: Diff, previous: ReviewFile[] | null): ReviewFile[] {
+  const before = new Map((previous ?? []).map(f => [f.id, f]))
+
   return diff.files.map(f => ({
+    id: f.id,
     path: f.path,
     status: f.status,
     additions: f.additions,
     deletions: f.deletions,
     binary: f.binary,
     dirty: f.dirty === true,
+    folded: before.get(f.id)?.folded ?? f.additions + f.deletions > FOLD_THRESHOLD,
   }))
 }
 
 function describeError(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
-}
-
-function plural(n: number, word: string): string {
-  return `${n} ${word}${n === 1 ? '' : 's'}`
 }
 
 /** Opens the target the state names and fills in the Diff; the pane redraws as the state changes. */
@@ -80,12 +77,12 @@ async function openCurrent($: EngineInterface, current: Review): Promise<string>
     const ws = createWorkspace(engineRunner($), await $.session.cwd())
     const info = await ws.open(current.target, current.baseRef === null ? {} : { baseRef: current.baseRef })
     const diff = await ws.diff()
-    cache = { key: info.key, diff }
+    diffCache.current = { key: info.key, diff }
     const opened: Review = {
       ...current,
       phase: 'open',
       info: toInfo(info),
-      files: summarise(diff),
+      files: summarise(diff, null),
       additions: diff.additions,
       deletions: diff.deletions,
       error: null,
@@ -111,11 +108,11 @@ async function refresh($: EngineInterface): Promise<void> {
   try {
     const ws = createWorkspace(engineRunner($), await $.session.cwd(), toWorkspaceInfo(current.info))
     const diff = await ws.diff()
-    cache = { key: current.info.key, diff }
+    diffCache.current = { key: current.info.key, diff }
     const refreshed = (r: Review): Review => ({
       ...r,
       phase: 'open',
-      files: summarise(diff),
+      files: summarise(diff, r.files),
       additions: diff.additions,
       deletions: diff.deletions,
       error: null,
@@ -137,7 +134,7 @@ export const register: Register = on => {
     })
     const current = await read($, review)
     if (current !== null) {
-      void $.ui.open({ id: PANE, title: 'diff' })
+      void $.ui.open({ id: PANE, title: 'diff', columns: PANE_COLUMNS })
       void refresh($)
     }
 
@@ -162,50 +159,28 @@ export const register: Register = on => {
       deletions: 0,
       error: null,
     }
-    cache = null
+    diffCache.current = null
     await update($, review, () => opening)
-    await $.ui.open({ id: PANE, title: 'diff' })
+    await $.ui.open({ id: PANE, title: 'diff', columns: PANE_COLUMNS })
 
     return { text: await openCurrent($, opening) }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text } = $.ui.resolve(e)
     const current = await read($, review)
 
-    if (current === null) {
-      return (
-        <Box flexDirection="column">
-          <Text dimColor>Nothing open. Run /explore {'<pr number>'}.</Text>
-        </Box>
-      )
-    }
-    const info = current.info
-    const head =
-      info === null
-        ? current.label
-        : `${current.label} · ${info.headRefName ?? info.headSha.slice(0, 7)} → ${info.baseRefName ?? info.baseRef}`
-
-    return (
-      <Box flexDirection="column">
-        <Text bold>{head}</Text>
-        {info !== null && info.title !== null && <Text>{info.title}</Text>}
-        {current.phase === 'opening' && <Text dimColor>Opening…</Text>}
-        {current.phase === 'failed' && <Text dimColor>Error: {current.error ?? 'unknown'}</Text>}
-        {current.files !== null && (
-          <Text dimColor>
-            {plural(current.files.length, 'file')} · +{current.additions} −{current.deletions}
-          </Text>
-        )}
-        {(current.files ?? []).map(f => (
-          <Text>
-            {BADGES[f.status]} {f.path}
-            {f.binary ? '  binary' : `  +${f.additions} −${f.deletions}`}
-            {f.dirty ? '  ●' : ''}
-          </Text>
-        ))}
-      </Box>
-    )
+    return renderPane($, e, current, {
+      scrollTo: key =>
+        void $.ui
+          .scroll({ in: PANE, to: { key }, block: 'start' })
+          .catch(err => $.ui.log(`diff-explorer: could not scroll to ${key}: ${describeError(err)}`)),
+      toggleFold: id =>
+        void update($, review, r =>
+          r === null || r.files === null
+            ? r
+            : { ...r, files: r.files.map(f => (f.id === id ? { ...f, folded: !f.folded } : f)) },
+        ),
+    })
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
