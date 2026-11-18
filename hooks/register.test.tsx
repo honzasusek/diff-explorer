@@ -10,7 +10,7 @@ const RUN = {
 const PANE = {
   plugin: 'diff-explorer',
   component: 'Pane',
-  requestId: 'diff',
+  requestId: 'explore',
   props: {
     title: 'diff',
     isFocused: false,

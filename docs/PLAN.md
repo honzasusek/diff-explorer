@@ -138,7 +138,7 @@ A `new`-side ref holds add and context lines numbered on the new Side; an `old`-
 | `state.ts` | the pane id and the module-level `diff` cache | The atoms (`review` with the target, `WorkspaceInfo`, the file list and folds; later `basket`, `anchor`, `stale`) live in `register.tsx`: the validator reads every `update`'s atom in the file that calls it, so an atom is not imported from elsewhere. `$.state` keys are declared in `types/index.d.ts`; the Diff itself stays in a module variable and is recomputed on load because the state store is for small values |
 | `runner.ts` | `Runner` over `$.process.run` | `cwd` from `$.session.cwd()`, `timeoutMs` for fetches, mapping of exit codes to Workspace errors |
 | `commands.ts` | handlers for `/explore`, `/add`, `/ref`, `/refs`, `/revert` | argument parsing, toasts and status text, confirmation for revert |
-| `pane.tsx` | `renderPane($, e, review, actions)`, called by the `ui.render` hook for `{ component: 'Pane', requestId: 'diff' }` in `register.tsx` | the tree in 4.5 over `core/diff/layout.ts`; windowing by `scroll.offset` and `bodyRows`; the 100,000-character budget per drawing; presses go back through `actions` (`scrollTo`, `toggleFold`) so the file only draws |
+| `pane.tsx` | `renderPane($, e, review, actions)`, called by the `ui.render` hook for `{ component: 'Pane', requestId: 'explore' }` in `register.tsx` | the tree in 4.5 over `core/diff/layout.ts`; windowing by `scroll.offset` and `bodyRows`; the 100,000-character budget per drawing; presses go back through `actions` (`scrollTo`, `toggleFold`) so the file only draws |
 | `band.tsx` | `ui.render` for `{ component: 'AbovePrompt' }` | chips, `[add selection]`, `[clear]`; `next(e)` when there is nothing to show |
 | `types/index.d.ts` | the `PluginState` contract | |
 
@@ -149,20 +149,20 @@ Events, each a one-line hook over a core call:
 | `session.start` | | registers the commands; if `$.store` holds a target for this repository, recomputes the Diff and reopens the pane |
 | `session.cwd` | | drops the review when the directory changes |
 | `command.run` | each command | 4.6 |
-| `ui.render` | `Pane`, `requestId: 'diff'` | draws the pane |
+| `ui.render` | `Pane`, `requestId: 'explore'` | draws the pane |
 | `ui.render` | `AbovePrompt` | draws the Basket band |
 | `ui.press` | handled by `onPress` closures | `[+file]`, `[+hunk]`, gutter numbers, chips, `[x]`, `[add selection]` |
 | `prompt.autocomplete` | `token: /^#/` | `suggestRefs` over the current Diff |
 | `prompt.submit` | | appends `renderRefs(basket)` to `e.text` when the Basket is not empty, then clears it once `next` resolves |
 | `prompt.compose` | | appends one `session` section: PR title, `base...head`, the file list with counts, how `code_ref` blocks are formatted, never commit or push |
 | `tool.call` | `tool: Edit, Write, MultiEdit, NotebookEdit` | `await next(e)`, then `workspace.diff()`, `markStale`, redraw |
-| `ui.close` | `id: 'diff'` | keeps the review in state so `/explore` reopens it |
+| `ui.close` | `id: 'explore'` | keeps the review in state so `/explore` reopens it |
 
 ### 4.5 The pane and line selection
 
 Tree, top to bottom, all engine elements (`Box`, `Text`, `Button`, `Code`):
 
-- A file list: one row per File Change with status, counts, dirty dot, and a fold toggle; pressing a row scrolls to the file via `$.ui.scroll({ in: 'diff', to: <file key> })`.
+- A file list: one row per File Change with status, counts, dirty dot, and a fold toggle; pressing a row scrolls to the file via `$.ui.scroll({ in: 'explore', to: <file key> })`.
 - Per File Change, a header `Box` keyed by path: path, status, counts, `[+file]` (`captureFile`), `[fold]`.
 - Per Hunk, a header row with the `@@` text and `[+hunk]` (`captureHunk`), then a `Code` with `format: 'diff'`, `source: renderHunk(hunk)`, `path: file.path`, `wrap: 'truncate-end'`, and beside it a column of `plain` `Button`s, one per row, labelled with the line number. The engine draws no `@@` row of its own, so a hunk takes exactly one row per line and the spike showed the column aligns row for row (research note, finding 2).
 - Files over the fold threshold (default 1,500 changed lines) start folded. The hook renders the hunks whose rows fall inside `scroll.offset − 2 × bodyRows .. + 3 × bodyRows` and, for the rest, a keyed `Box` whose `height` is the hunk's row count, so the tree's rows never change, `$.ui.scroll` to a key lands exactly even on an undrawn hunk, and a drawing stays under 100,000 characters for any PR size (the spike's 3,100-line PR drew at most 22,000). Every header `Text` is `wrap: 'truncate-end'` so it stays one row. The engine asks again on every scroll, so the window follows the reader.

@@ -1,6 +1,8 @@
 import type { Diff } from '../core/types.ts'
 
-export const PANE = 'diff'
+// Not 'diff': the engine has a site of that name and answers its scroll
+// itself, so a pane opened as 'diff' never scrolls (research note, Limits).
+export const PANE = 'explore'
 
 // The parsed Diff is large and lives here, not in $.state. A reload empties
 // it; session.start recomputes it from the stored ReviewInfo. `key` is the
