@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { CLIENT, sampleDiff, sampleFile } from "../testing/sample.ts";
-import { hunkOfRef, matchFiles, parseRefToken, refLabel, renderRefs, suggestRefs } from "./refs.ts";
+import { hunkOfRef, matchFiles, parseRefToken, refLabel, refName, renderRefs, suggestRefs } from "./refs.ts";
 import { captureFile, captureRef, captureRows } from "./selection.ts";
 import type { CodeRef } from "../types.ts";
 
@@ -17,6 +17,7 @@ test("refLabel is the basename and the range, with the old Side named", () => {
   assert.equal(refLabel(newRef(41, 42)), "client.ts:41-42");
   assert.equal(refLabel(newRef(41, 41)), "client.ts:41");
   assert.equal(refLabel(captureFile(file("LICENSE"))!), "LICENSE:1-2 (old)");
+  assert.equal(refName(newRef(41, 42)), "src/payments/client.ts:41-42");
 });
 
 test("renderRefs writes numbered code_ref blocks, r1, r2, ... with a blank line between", () => {

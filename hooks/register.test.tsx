@@ -2,6 +2,8 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
+import { SAMPLE_PATCH } from '../core/testing/sample.ts'
+
 const RUN = {
   origin: { kind: 'composer' },
   presentation: { isFullscreen: true, columns: 160 },
@@ -56,7 +58,7 @@ const value = (a: Answer) => ({ value: { ...a, isStdoutTruncated: false, isStder
 
 test('/explore . opens the working tree and the pane shows its files', async ($, on) => {
   mock.clock(on, { now: 1_700_000_000_000 })
-  on('command.register', () => ({ value: { command: 'explore' } }))
+  on('command.register', (_, e) => ({ value: { command: e.name } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.cwd', () => ({ value: '/repo' }))
@@ -80,7 +82,7 @@ test('/explore . opens the working tree and the pane shows its files', async ($,
 
 test('/explore . <base> measures from the given ref', async ($, on) => {
   mock.clock(on)
-  on('command.register', () => ({ value: { command: 'explore' } }))
+  on('command.register', (_, e) => ({ value: { command: e.name } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.cwd', () => ({ value: '/repo' }))
@@ -99,7 +101,7 @@ test('/explore . <base> measures from the given ref', async ($, on) => {
 
 test('/explore reports a workspace error in the transcript and the pane', async ($, on) => {
   mock.clock(on)
-  on('command.register', () => ({ value: { command: 'explore' } }))
+  on('command.register', (_, e) => ({ value: { command: e.name } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.cwd', () => ({ value: '/elsewhere' }))
@@ -116,7 +118,7 @@ test('/explore reports a workspace error in the transcript and the pane', async 
 
 test('/explore without a usable target explains itself', async ($, on) => {
   mock.clock(on)
-  on('command.register', () => ({ value: { command: 'explore' } }))
+  on('command.register', (_, e) => ({ value: { command: e.name } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
 
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
@@ -141,7 +143,7 @@ const BIG_PATCH = [
 async function openBig($: Engine, on: On) {
   mock.clock(on)
   on('ui.status', () => ({ value: undefined }))
-  on('command.register', () => ({ value: { command: 'explore' } }))
+  on('command.register', (_, e) => ({ value: { command: e.name } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.cwd', () => ({ value: '/repo' }))
@@ -175,5 +177,80 @@ test('a large file starts folded; unfolding draws the hunks near the window and 
 
   await ui.press({ key: 'fold:big-ts' })
   expect(await ui.findAll({ type: 'Code' })).toHaveLength(0)
+  await ui.unmount()
+})
+
+/** Opens the sample diff of core/testing/sample.ts. `selected` is what
+ * $.ui.selection answers, changeable between commands; `toasts` collects
+ * what the mod toasted. */
+async function openSample($: Engine, on: On, selected: { text?: string } = {}, toasts: string[] = []) {
+  mock.clock(on)
+  on('ui.status', () => ({ value: undefined }))
+  on('ui.toast', (_, e) => {
+    toasts.push(e.text)
+
+    return { value: undefined }
+  })
+  on('ui.selection', () => ({ value: selected.text === undefined ? undefined : { text: selected.text } }))
+  on('command.register', (_, e) => ({ value: { command: e.name } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('session.cwd', () => ({ value: '/repo' }))
+  on('process.run', (_, e) => value(gitAnswer(e.argv, SAMPLE_PATCH)))
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  const ran = await $.command.run({ ...RUN, command: 'explore', args: '.' })
+  expect(ran.text).toBe('Opened working tree: 4 files, +7 −5 against origin/HEAD.')
+}
+
+const add = ($: Engine) => $.command.run({ ...RUN, command: 'add', args: '' }).then(r => r.text)
+
+test('/add puts the selected lines in the refs once, and explains a miss', async ($, on) => {
+  const selected: { text?: string } = { text: '  if (!res.ok && retryable(res)) {\n    return retry(() => charge(url, opts));\n' }
+  await openSample($, on, selected)
+  expect(await add($)).toBe('Added client.ts:41-42.')
+  expect(await add($)).toBe('client.ts:41-42 is already in the refs.')
+  selected.text = '  return res.json();'
+  expect(await add($)).toBe(
+    'The selection is in several places: README.md:2 (old), src/payments/client.ts:43. Add one with /ref path:from-to.',
+  )
+  selected.text = 'nothing like this'
+  expect(await add($)).toBe('The selected text is not in the diff.')
+  selected.text = undefined
+  expect(await add($)).toBe('Select lines in the diff pane, then run /add.')
+})
+
+test('/add before /explore says so', async ($, on) => {
+  mock.clock(on)
+  on('ui.selection', () => ({ value: { text: 'x' } }))
+  on('command.register', (_, e) => ({ value: { command: e.name } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  expect(await add($)).toBe('Nothing is open. Run /explore first.')
+})
+
+test('the pane adds a hunk, a file, and a gutter range on the second press', async ($, on) => {
+  const toasts: string[] = []
+  await openSample($, on, {}, toasts)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const gutter = async (row: number) => (await ui.find({ key: `line:src-payments-client-ts:0:${row}` }))?.text
+
+  await ui.press({ key: 'hunk+:src-payments-client-ts:1' })
+  expect(toasts).toEqual(['Added client.ts:81-83 to the refs'])
+  await ui.press({ key: 'file+:src-payments-retry-ts' })
+  expect(toasts[1]).toBe('Added retry.ts:1-3 to the refs')
+
+  // The first press anchors and marks the row; the second, in either
+  // order, adds the rows between and clears the mark.
+  expect(await gutter(3)).toBe(' 42')
+  await ui.press({ key: 'line:src-payments-client-ts:0:3' })
+  expect(toasts).toHaveLength(2)
+  expect(await gutter(3)).toBe('▸42')
+  expect(await gutter(1)).toBe(' 41')
+  await ui.press({ key: 'line:src-payments-client-ts:0:1' })
+  expect(toasts[2]).toBe('Added client.ts:41-42 to the refs')
+  expect(await gutter(3)).toBe(' 42')
+
+  await ui.press({ key: 'hunk+:src-payments-client-ts:1' })
+  expect(toasts[3]).toBe('client.ts:81-83 is already in the refs')
   await ui.unmount()
 })

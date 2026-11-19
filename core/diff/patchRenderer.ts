@@ -33,14 +33,17 @@ export function renderHunkHeader(hunk: Hunk): string {
 
 const MARKERS: Record<DiffLine["type"], string> = { context: " ", add: "+", del: "-" };
 
-export function renderLine(line: DiffLine): string {
+export function renderLine(line: DiffLine, noNewlineNote = true): string {
   const text = MARKERS[line.type] + line.content;
-  return line.noNewline ? `${text}\n\\ No newline at end of file` : text;
+  return noNewlineNote && line.noNewline ? `${text}\n\\ No newline at end of file` : text;
 }
 
-/** One hunk as git prints it: the @@ header and its lines, no trailing newline. */
-export function renderHunk(hunk: Hunk): string {
-  return [renderHunkHeader(hunk), ...hunk.lines.map(renderLine)].join("\n");
+/** One hunk as git prints it: the @@ header and its lines, no trailing
+ * newline. Without the note, a hunk is exactly one row per line, which the
+ * pane's gutter and row model count on. */
+export function renderHunk(hunk: Hunk, options: { noNewlineNote?: boolean } = {}): string {
+  const note = options.noNewlineNote ?? true;
+  return [renderHunkHeader(hunk), ...hunk.lines.map((line) => renderLine(line, note))].join("\n");
 }
 
 /** One file's whole patch, ending with a newline, as `git diff` would print it. */
@@ -69,7 +72,7 @@ export function renderPatch(file: DiffFile): string {
   if (file.binary) {
     out.push(`Binary files ${oldSide} and ${newSide} differ`);
   } else if (file.hunks.length > 0) {
-    out.push(`--- ${oldSide}`, `+++ ${newSide}`, ...file.hunks.map(renderHunk));
+    out.push(`--- ${oldSide}`, `+++ ${newSide}`, ...file.hunks.map((hunk) => renderHunk(hunk)));
   }
   return out.join("\n") + "\n";
 }

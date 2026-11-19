@@ -36,6 +36,32 @@ export type ReviewInfo = {
   url: string | null
 }
 
+/** One captured line of a Code Ref: core's DiffLine. */
+export type RefLine = {
+  type: 'context' | 'add' | 'del'
+  content: string
+  oldNo: number | null
+  newNo: number | null
+  noNewline?: boolean
+}
+
+/** A Code Ref: core's CodeRef, lines captured with it (ADR-0003). */
+export type Ref = {
+  id: string
+  file: string
+  side: 'old' | 'new'
+  start: number
+  end: number
+  lines: RefLine[]
+}
+
+/** The row of the first gutter press, waiting for the second; core's HunkRow. */
+export type Anchor = {
+  file: string
+  hunk: number
+  row: number
+}
+
 export type Review = {
   target: ReviewTarget
   /** A base ref given on the command line, else the Workspace default. */
@@ -53,6 +79,6 @@ export type Review = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'diff-explorer': { review: Shaped<Review | null> }
+    'diff-explorer': { review: Shaped<Review | null>; basket: Shaped<Ref[]>; anchor: Shaped<Anchor | null> }
   }
 }

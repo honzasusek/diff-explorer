@@ -9,11 +9,19 @@ import { captureFile, captureRef } from "./selection.ts";
 
 const MARKERS: Record<CodeRef["lines"][number]["type"], string> = { context: " ", add: "+", del: "-" };
 
-/** `client.ts:41-42`; `client.ts:41` for one line; `(old)` after an old-Side ref. */
-export function refLabel(ref: CodeRef): string {
-  const name = ref.file.slice(ref.file.lastIndexOf("/") + 1);
+function describe(ref: CodeRef, name: string): string {
   const lines = ref.start === ref.end ? `${ref.start}` : `${ref.start}-${ref.end}`;
   return `${name}:${lines}${ref.side === "old" ? " (old)" : ""}`;
+}
+
+/** The chip's words: `client.ts:41-42`; `client.ts:41` for one line; `(old)` after an old-Side ref. */
+export function refLabel(ref: CodeRef): string {
+  return describe(ref, ref.file.slice(ref.file.lastIndexOf("/") + 1));
+}
+
+/** The same with the whole path, for a list where basenames could repeat. */
+export function refName(ref: CodeRef): string {
+  return describe(ref, ref.file);
 }
 
 /** One ref as the model reads it. Each line: its number on the ref's Side,

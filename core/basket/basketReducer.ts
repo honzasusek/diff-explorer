@@ -4,7 +4,7 @@
 // (ADR-0003), which the band marks rather than re-pointing it.
 import type { CodeRef, Diff, DiffLine } from "../types.ts";
 
-export type Basket = readonly CodeRef[];
+export type Basket = CodeRef[];
 
 export type BasketAction = { type: "add"; ref: CodeRef } | { type: "remove"; id: string } | { type: "clear" };
 
