@@ -5,9 +5,17 @@
 // ending with the first row and the last line starting with the last row,
 // since a drag begins and ends mid-line.
 //
+// A line wider than the pane is cut with `…` (the Code's `truncate-end`), and
+// the selection carries the cut row as shown: the text up to the cut and the
+// `…`, nothing after. Such a row matches as a prefix of its line.
+//
 // Sample: "retryable(res)) {" through "    return retry(() => charge" in
-// client.ts lands on rows 2 to 3 of its first hunk.
+// client.ts lands on rows 2 to 3 of its first hunk, and so does
+// "retryable(res)…" through "    return retry(() => charge".
 import type { Diff, DiffFile } from "../types.ts";
+
+/** What the pane draws at the end of a row it cut. */
+const CUT = "…";
 
 export interface LocatedRows {
   file: DiffFile;
@@ -31,11 +39,13 @@ export function locateText(diff: Diff, text: string, hint?: { file: string }): L
   if (rows.length === 0 || (rows.length === 1 && rows[0]?.trim() === "")) return { kind: "notFound" };
   const n = rows.length;
   const matches = (content: string, i: number): boolean => {
-    const row = rows[i] ?? "";
+    const shown = rows[i] ?? "";
+    const cut = shown.endsWith(CUT);
+    const row = cut ? shown.slice(0, -CUT.length) : shown;
     const line = content.trimEnd();
-    if (n === 1) return line.includes(row);
+    if (n === 1 || (i === 0 && cut)) return line.includes(row);
     if (i === 0) return line.endsWith(row);
-    if (i === n - 1) return line.startsWith(row);
+    if (i === n - 1 || cut) return line.startsWith(row);
     return line === row;
   };
   const candidates: LocatedRows[] = [];

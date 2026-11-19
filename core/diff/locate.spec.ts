@@ -24,6 +24,14 @@ test("a drag may begin and end mid-line", () => {
   assert.deepEqual(where(locateText(diff, "fetch(url, opts);\n  if (!res.ok) throw")), [CLIENT, 0, 0, 1]);
 });
 
+test("a row the pane cut with … matches as a prefix of its line", () => {
+  assert.deepEqual(where(locateText(diff, "retryable(res)…\n    return retry(() => charge")), [CLIENT, 0, 2, 3]);
+  assert.deepEqual(where(locateText(diff, "  if (!res.ok && retryable(res)) {\n    return retry(() =>…\n  return res.json();")), [CLIENT, 0, 2, 4]);
+  assert.deepEqual(where(locateText(diff, "  if (!res.ok && retryable(res)) {\n    return retry(() =>…\n")), [CLIENT, 0, 2, 3]);
+  assert.deepEqual(where(locateText(diff, "  if (!res.ok && retryable(…")), [CLIENT, 0, 2, 2]);
+  assert.equal(locateText(diff, "  if (!res.ok && retryable(res)) {\n    return fn(…\n  return res.json();").kind, "notFound");
+});
+
 test("a line found in two files is ambiguous unless the hint settles it", () => {
   const text = "  return res.json();";
   assert.deepEqual(where(locateText(diff, text)), [[CLIENT, 0, 4, 4], ["README.md", 0, 1, 1]]);
