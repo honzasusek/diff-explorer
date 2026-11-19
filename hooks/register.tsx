@@ -4,11 +4,14 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { Review, ReviewFile, ReviewInfo } from '../types'
 import type { CodeRef, Diff, DiffFile, HunkRow, WorkspaceInfo } from '../core/types.ts'
 import { basketReducer } from '../core/basket/basketReducer.ts'
-import { refLabel } from '../core/diff/refs.ts'
+import { fileKey, hunkKey } from '../core/diff/layout.ts'
+import { hunkOfRef, refLabel, refsInText, renderRefs } from '../core/diff/refs.ts'
 import { captureFile, captureHunk, captureRows, gutterPress } from '../core/diff/selection.ts'
 import { describeTarget, parseTarget } from '../core/workspace/target.ts'
 import { createWorkspace } from '../core/workspace/workspace.ts'
-import { runAdd } from './commands.ts'
+import { renderBand } from './band.tsx'
+import type { BandActions } from './band.tsx'
+import { runAdd, runRef, runRefs } from './commands.ts'
 import type { Outcome } from './commands.ts'
 import { plural, renderPane } from './pane.tsx'
 import type { PaneActions } from './pane.tsx'
@@ -117,6 +120,38 @@ async function gutterPressed($: EngineInterface, row: HunkRow): Promise<void> {
   if (file !== undefined) await addCaptured($, captureRows(file, press.hunk, press.from, press.to))
 }
 
+/** Scrolls the pane to where a ref's lines are now: its hunk, or the file
+ * header when the file is folded or the line is gone. */
+async function showRef($: EngineInterface, ref: CodeRef): Promise<void> {
+  const diff = await openDiff($)
+  const at = diff === null ? undefined : hunkOfRef(diff, ref)
+  if (at === undefined) {
+    $.ui.toast(`${refLabel(ref)} is not in the diff any more`)
+
+    return
+  }
+  const current = await read($, review)
+  const folded = current?.files?.find(f => f.id === at.file.id)?.folded === true
+  const key = at.hunk === null || folded ? fileKey(at.file.id) : hunkKey(at.file.id, at.hunk)
+  const scrolled = await $.ui.scroll({ in: PANE, to: { key }, block: 'start' }).catch(err => ({ deny: describeError(err) }))
+  if (scrolled.deny !== undefined) $.ui.log(`diff-explorer: could not scroll to ${key}: ${scrolled.deny}`)
+}
+
+function bandActions($: EngineInterface): BandActions {
+  const log = (what: string) => (err: unknown) => $.ui.log(`diff-explorer: ${what} failed: ${describeError(err)}`)
+
+  return {
+    show: ref => void showRef($, ref).catch(log('chip')),
+    remove: id => void update($, basket, b => basketReducer(b, { type: 'remove', id })).catch(log('[x]')),
+    addSelection: () =>
+      void openDiff($)
+        .then(diff => runAdd($, diff, ref => addRef($, ref)))
+        .then(text => $.ui.toast(text))
+        .catch(log('[add selection]')),
+    clear: () => void update($, basket, () => []).catch(log('[clear]')),
+  }
+}
+
 function paneActions($: EngineInterface): PaneActions {
   const log = (what: string) => (err: unknown) => $.ui.log(`diff-explorer: ${what} failed: ${describeError(err)}`)
 
@@ -200,6 +235,16 @@ export const register: Register = on => {
       name: 'add',
       description: 'Add the lines selected in the diff pane to the refs for the next prompt',
     })
+    await $.command.register({
+      name: 'ref',
+      description: 'Add a typed line range of the diff to the refs for the next prompt',
+      argumentHint: 'path:from-to [old]',
+    })
+    await $.command.register({
+      name: 'refs',
+      description: 'List the refs waiting for the next prompt, or clear them',
+      argumentHint: '[clear]',
+    })
     const current = await read($, review)
     if (current !== null) {
       void $.ui.open({ id: PANE, title: 'diff', columns: PANE_COLUMNS })
@@ -240,6 +285,31 @@ export const register: Register = on => {
     text: await runAdd($, await openDiff($), ref => addRef($, ref)),
   }))
 
+  on('command.run', { command: 'ref' }, async ($, e) => ({
+    text: await runRef(e.args, await openDiff($), ref => addRef($, ref)),
+  }))
+
+  on('command.run', { command: 'refs' }, async ($, e) => ({
+    text: await runRefs(e.args, await read($, basket), () => update($, basket, () => []).then(() => undefined)),
+  }))
+
+  // The refs ride along as code_ref blocks after the prompt's own words, the
+  // Basket's first and then those typed as #path:from-to tokens, and the
+  // Basket empties once the prompt has entered. A slash command's line and a
+  // hidden prompt take no rewrite, so they pass untouched.
+  on('prompt.submit', async ($, e, next) => {
+    if (e.command !== undefined || e.isMeta === true) return next(e)
+    const diff = await openDiff($)
+    const typed = diff === null ? { refs: [], errors: [] } : refsInText(diff, e.text)
+    for (const error of typed.errors) $.ui.toast(error)
+    const refs = typed.refs.reduce((all, ref) => basketReducer(all, { type: 'add', ref }), await read($, basket))
+    if (refs.length === 0) return next(e)
+    const result = await next({ ...e, text: `${e.text}\n\n${renderRefs(refs)}` })
+    if (result.drop === undefined) await update($, basket, () => [])
+
+    return result
+  })
+
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) =>
     renderPane($, e, await read($, review), await read($, anchor), paneActions($)),
   )
@@ -249,12 +319,7 @@ export const register: Register = on => {
     if (e.props.hasSurvey || current === null || current.phase !== 'open') {
       return next(e)
     }
-    const { Box, Text } = $.ui.resolve(e)
 
-    return (
-      <Box>
-        <Text dimColor>refs: none</Text>
-      </Box>
-    )
+    return renderBand($, e, await read($, basket), bandActions($))
   })
 }

@@ -2,7 +2,7 @@ import type { EngineInterface } from 'claude-code'
 
 import type { CodeRef, Diff } from '../core/types.ts'
 import { locateText } from '../core/diff/locate.ts'
-import { refLabel, refName } from '../core/diff/refs.ts'
+import { parseRefToken, refLabel, refName } from '../core/diff/refs.ts'
 import { captureRows } from '../core/diff/selection.ts'
 
 // The slash commands' words: what each answers in the transcript. The state
@@ -41,4 +41,35 @@ export async function runAdd(
   if (ref === undefined) return 'The selected text is not in the diff.'
 
   return added(ref, await add(ref))
+}
+
+const REF_USAGE = 'Usage: /ref path:from-to [old]'
+
+/** `/ref path:from-to [old]`: a typed range, on the new Side unless `old` follows. */
+export async function runRef(args: string, diff: Diff | null, add: (ref: CodeRef) => Promise<Outcome>): Promise<string> {
+  if (diff === null) return NOTHING_OPEN
+  const [token = '', side, ...rest] = args.trim().split(/\s+/)
+  if (token === '' || rest.length > 0 || (side !== undefined && side !== 'old' && side !== 'new')) return REF_USAGE
+  const parsed = parseRefToken(token, diff, side ?? 'new')
+  if (parsed.ref === undefined) return parsed.error
+
+  return added(parsed.ref, await add(parsed.ref))
+}
+
+export const NO_REFS = 'No refs. Select lines in the diff pane and run /add, or /ref path:from-to.'
+
+/** `/refs`: the Basket, one line per ref; `/refs clear` empties it. */
+export async function runRefs(args: string, basket: CodeRef[], clear: () => Promise<void>): Promise<string> {
+  const what = args.trim()
+  if (what === 'clear') {
+    if (basket.length === 0) return 'No refs to clear.'
+    await clear()
+
+    return 'Refs cleared.'
+  }
+  if (what !== '') return 'Usage: /refs [clear]'
+  if (basket.length === 0) return NO_REFS
+  const rows = basket.map((ref, i) => `r${i + 1}  ${refName(ref)}  (${ref.lines.length} ${ref.lines.length === 1 ? 'line' : 'lines'})`)
+
+  return [`${basket.length === 1 ? '1 ref' : `${basket.length} refs`} for the next prompt:`, ...rows].join('\n')
 }

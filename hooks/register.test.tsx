@@ -254,3 +254,99 @@ test('the pane adds a hunk, a file, and a gutter range on the second press', asy
   expect(toasts[3]).toBe('client.ts:81-83 is already in the refs')
   await ui.unmount()
 })
+
+const BAND = {
+  plugin: 'diff-explorer',
+  component: 'AbovePrompt',
+  requestId: 'above-prompt',
+  props: {
+    hasSurvey: false,
+    isCollapsed: false,
+    isWorking: false,
+    maxRows: 10,
+    bodyColumns: 120,
+    scroll: { offset: 0, bodyRows: 9 },
+    view: {},
+  },
+} as const
+
+/** A prompt as the person's Enter submits it. */
+const PROMPT = { wait: false, origin: { kind: 'composer' } } as const
+
+const run = ($: Engine, command: string, args = '') => $.command.run({ ...RUN, command, args }).then(r => r.text)
+
+test('/ref adds a typed range; /refs lists the basket and clears it', async ($, on) => {
+  await openSample($, on)
+  expect(await run($, 'ref')).toBe('Usage: /ref path:from-to [old]')
+  expect(await run($, 'ref', 'client.ts:41-43 sideways')).toBe('Usage: /ref path:from-to [old]')
+  expect(await run($, 'ref', 'nope.ts:1')).toBe('No file in the diff matches nope.ts')
+  expect(await run($, 'refs')).toBe('No refs. Select lines in the diff pane and run /add, or /ref path:from-to.')
+  expect(await run($, 'ref', 'client.ts:41-43')).toBe('Added client.ts:41-43.')
+  expect(await run($, 'ref', 'README.md:1-2 old')).toBe('Added README.md:1-2 (old).')
+  expect(await run($, 'ref', 'client.ts:41-43')).toBe('client.ts:41-43 is already in the refs.')
+  expect(await run($, 'refs')).toBe(
+    '2 refs for the next prompt:\nr1  src/payments/client.ts:41-43  (3 lines)\nr2  README.md:1-2 (old)  (2 lines)',
+  )
+  expect(await run($, 'refs', 'clear')).toBe('Refs cleared.')
+  expect(await run($, 'refs', 'clear')).toBe('No refs to clear.')
+  expect(await run($, 'refs', 'x')).toBe('Usage: /refs [clear]')
+})
+
+test('the band shows the basket as chips; a chip scrolls, [x], [add selection] and [clear] act on it', async ($, on) => {
+  const toasts: string[] = []
+  const logged: string[] = []
+  on('ui.log', (_, e) => {
+    logged.push(e.text)
+
+    return { value: undefined }
+  })
+  await openSample($, on, { text: '  return fn();' }, toasts)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /^refs: none$/ })).toBeDefined()
+  expect(await ui.find({ key: 'clear-refs' })).toBeUndefined()
+
+  await run($, 'ref', 'client.ts:82')
+  await ui.redraw()
+  const chip = 'ref:src/payments/client.ts:new:82-82'
+  expect((await ui.find({ key: chip }))?.text).toBe('client.ts:82')
+  // The kit lays nothing out, so the scroll is refused; the refusal names
+  // the key, which shows the press asked for the right hunk.
+  await ui.press({ key: chip })
+  expect(logged.some(line => line.includes('could not scroll to hunk:src-payments-client-ts:1'))).toBe(true)
+
+  await ui.press({ key: 'add-selection' })
+  expect(toasts).toContain('Added retry.ts:2.')
+  expect(await ui.find({ key: 'ref:src/payments/retry.ts:new:2-2' })).toBeDefined()
+  await ui.press({ key: 'drop:src/payments/client.ts:new:82-82' })
+  expect(await ui.find({ key: chip })).toBeUndefined()
+  expect(await ui.find({ key: 'clear-refs' })).toBeDefined()
+  await ui.press({ key: 'clear-refs' })
+  expect(await ui.find({ type: 'Text', text: /^refs: none$/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a prompt carries the basket and the typed refs as code_ref blocks, then the basket is empty', async ($, on) => {
+  on('prompt.submit', (_, e) => ({ text: e.text }))
+  await openSample($, on)
+  await run($, 'ref', 'client.ts:41-43')
+  const sent = await $.prompt.submit({ ...PROMPT, text: 'why is this retry safe? also #retry.ts:1-2' })
+  expect(sent.drop).toBeUndefined()
+  expect(sent.text).toBe(
+    [
+      'why is this retry safe? also #retry.ts:1-2',
+      '',
+      '<code_ref id="r1" file="src/payments/client.ts" side="new" lines="41-43">',
+      '41 +|   if (!res.ok && retryable(res)) {',
+      '42 +|     return retry(() => charge(url, opts));',
+      '43  |   return res.json();',
+      '</code_ref>',
+      '',
+      '<code_ref id="r2" file="src/payments/retry.ts" side="new" lines="1-2">',
+      '1 +| export function retry<T>(fn: () => Promise<T>): Promise<T> {',
+      '2 +|   return fn();',
+      '</code_ref>',
+    ].join('\n'),
+  )
+  expect(await run($, 'refs')).toBe('No refs. Select lines in the diff pane and run /add, or /ref path:from-to.')
+  expect((await $.prompt.submit({ ...PROMPT, text: 'and now?' })).text).toBe('and now?')
+})

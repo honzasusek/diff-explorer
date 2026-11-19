@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { CLIENT, sampleDiff, sampleFile } from "../testing/sample.ts";
-import { hunkOfRef, matchFiles, parseRefToken, refLabel, refName, renderRefs, suggestRefs } from "./refs.ts";
+import { hunkOfRef, matchFiles, parseRefToken, refLabel, refName, refsInText, renderRefs, suggestRefs } from "./refs.ts";
 import { captureFile, captureRef, captureRows } from "./selection.ts";
 import type { CodeRef } from "../types.ts";
 
@@ -77,4 +77,12 @@ test("hunkOfRef finds the hunk holding the ref's first line", () => {
   assert.deepEqual(hunkOfRef(diff, newRef(82, 82)), { file: file(CLIENT), hunk: 1 });
   assert.deepEqual(hunkOfRef(diff, { ...newRef(41, 42), start: 999 }), { file: file(CLIENT), hunk: null });
   assert.equal(hunkOfRef(diff, { ...newRef(41, 42), file: "nope" }), undefined);
+});
+
+test("refsInText picks the #path:from-to tokens of a prompt, once each, and reports a bad range", () => {
+  const text = "why #client.ts:41-43 and #retry.ts, see #client.ts:41-43 again; issue #412, #nope.ts:3 and #x:y";
+  const found = refsInText(diff, text);
+  assert.deepEqual(found.refs.map((r) => r.id), ["src/payments/client.ts:new:41-43", "src/payments/retry.ts:new:1-3"]);
+  assert.deepEqual(found.errors, ["No file in the diff matches nope.ts"]);
+  assert.deepEqual(refsInText(diff, "no refs here, a#b neither"), { refs: [], errors: [] });
 });

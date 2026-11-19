@@ -153,7 +153,7 @@ Events, each a one-line hook over a core call:
 | `ui.render` | `AbovePrompt` | draws the Basket band |
 | `ui.press` | handled by `onPress` closures | `[+file]`, `[+hunk]`, gutter numbers, chips, `[x]`, `[add selection]` |
 | `prompt.autocomplete` | `token: /^#/` | `suggestRefs` over the current Diff |
-| `prompt.submit` | | appends `renderRefs(basket)` to `e.text` when the Basket is not empty, then clears it once `next` resolves |
+| `prompt.submit` | | appends `renderRefs` of the Basket and of the `#path:from-to` tokens in the text to `e.text`, then clears the Basket once `next` resolves without a drop; a slash command's line and a hidden prompt pass untouched |
 | `prompt.compose` | | appends one `session` section: PR title, `base...head`, the file list with counts, how `code_ref` blocks are formatted, never commit or push |
 | `tool.call` | `tool: Edit, Write, MultiEdit, NotebookEdit` | `await next(e)`, then `workspace.diff()`, `markStale`, redraw |
 | `ui.close` | `id: 'explore'` | keeps the review in state so `/explore` reopens it |
@@ -174,7 +174,7 @@ Selection, from the reviewer's side:
 | drag across lines in the pane, then `[add selection]` or `/add` | `$.ui.selection()` gives the copied text; `locateText` maps it to lines; `captureRef` adds a chip. `Ambiguous` shows a toast naming the candidates and asks for `/ref` |
 | click a line number, then another | first press sets `anchor`, second press `extend`s and captures at once; pressing the anchor again clears. No shift-click and no drag ranges: presses carry no modifiers |
 | `[+hunk]`, `[+file]` | one press |
-| `#cli` in the prompt | typeahead offers `#client.ts`, then `#client.ts:40-44` per hunk; `#client.ts:41-43` typed by hand also works; `prompt.submit` replaces the token with a `code_ref` block |
+| `#cli` in the prompt | typeahead offers `#src/payments/client.ts`, then `#src/payments/client.ts:40-43` per hunk; `#client.ts:41-43` typed by hand also works; `prompt.submit` appends the token's `code_ref` block after the prompt, the token staying as written so the sentence still reads |
 | press a chip | `$.ui.scroll` to the hunk that holds the ref |
 | `[x]` on a chip | removes it |
 

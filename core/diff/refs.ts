@@ -110,6 +110,30 @@ export function suggestRefs(diff: Diff, token: string, limit = 20): string[] {
   return files.map((f) => `#${f.path}`).slice(0, limit);
 }
 
+const TOKENS_RE = /(?<=^|\s)#[^\s#]+/g;
+const RANGE_RE = /:\d/;
+/** What prose hangs on a token: `#retry.ts,` names retry.ts. */
+const TRAILING_PUNCTUATION_RE = /[.,;:?!)]+$/;
+
+/** The refs typed into a prompt as `#path:from-to` tokens, in order, each
+ * once. A token that names lines but parses to nothing (`#nope.ts:3`) is an
+ * error to show; a bare `#word` that is no file is left alone, since `#412`
+ * in prose is not a ref. */
+export function refsInText(diff: Diff, text: string): { refs: CodeRef[]; errors: string[] } {
+  const refs: CodeRef[] = [];
+  const errors: string[] = [];
+  for (const [raw] of text.matchAll(TOKENS_RE)) {
+    const token = raw.replace(TRAILING_PUNCTUATION_RE, "");
+    const parsed = parseRefToken(token, diff);
+    if (parsed.ref !== undefined) {
+      if (!refs.some((r) => r.id === parsed.ref.id)) refs.push(parsed.ref);
+    } else if (RANGE_RE.test(token)) {
+      errors.push(parsed.error);
+    }
+  }
+  return { refs, errors };
+}
+
 /** Where a ref's first line sits now: its file and the hunk holding `start`
  * on its Side, for scrolling the pane there; `hunk` is null when the file
  * is in the Diff but the line is not. */
