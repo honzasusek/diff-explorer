@@ -54,7 +54,7 @@ function gitAnswer(argv: readonly string[], patch = PATCH): Answer {
 
 const value = (a: Answer) => ({ value: { ...a, isStdoutTruncated: false, isStderrTruncated: false } })
 
-test('/explore . opens the working tree and the pane lists its files', async ($, on) => {
+test('/explore . opens the working tree and the pane shows its files', async ($, on) => {
   mock.clock(on, { now: 1_700_000_000_000 })
   on('command.register', () => ({ value: { command: 'explore' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
@@ -69,7 +69,7 @@ test('/explore . opens the working tree and the pane lists its files', async ($,
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
     expect(await ui.find({ type: 'Text', text: /working tree/ })).toBeDefined()
-    expect(await ui.find({ type: 'Button', text: /M src\/client\.ts\s+\+2 −1/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^M src\/client\.ts\s+\+2 −1$/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /^@@ -40,3 \+40,4 @@/ })).toBeDefined()
     const code = await ui.find({ type: 'Code' })
     expect(code?.props).toMatchObject({ format: 'diff', path: 'src/client.ts', wrap: 'truncate-end' })
@@ -154,13 +154,14 @@ async function openBig($: Engine, on: On) {
 test('a large file starts folded; unfolding draws the hunks near the window and placeholders for the rest', async ($, on) => {
   await openBig($, on)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect(await ui.find({ type: 'Button', text: /M big\.ts\s+\+1800 −0 \(folded\)/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^M big\.ts\s+\+1800 −0$/ })).toBeDefined()
+  expect((await ui.find({ type: 'Button', key: 'fold:big-ts' }))?.text).toBe('unfold')
   expect(await ui.findAll({ type: 'Code' })).toHaveLength(0)
 
   await ui.press({ key: 'fold:big-ts' })
-  expect(await ui.find({ type: 'Button', text: /\(folded\)/ })).toBeUndefined()
-  // Rows: head 2, list 1, file header 1, so the first hunk starts at row 4 and
-  // each hunk takes 601 rows. At offset 0 with 20 body rows only the first is near.
+  expect((await ui.find({ type: 'Button', key: 'fold:big-ts' }))?.text).toBe('fold')
+  // Rows: head 2, file header 1, so the first hunk starts at row 3 and each
+  // hunk takes 601 rows. At offset 0 with 20 body rows only the first is near.
   let codes = await ui.findAll({ type: 'Code' })
   expect(codes).toHaveLength(1)
   expect(String(codes[0]?.props.source).startsWith('@@ -1,0 +1,600 @@')).toBe(true)
@@ -174,21 +175,5 @@ test('a large file starts folded; unfolding draws the hunks near the window and 
 
   await ui.press({ key: 'fold:big-ts' })
   expect(await ui.findAll({ type: 'Code' })).toHaveLength(0)
-  await ui.unmount()
-})
-
-test('a file list row asks the engine to scroll to that file', async ($, on) => {
-  // The kit lays nothing out, so the scroll is refused there; the refusal
-  // names the key, which shows the press reached the right call.
-  const logged: string[] = []
-  on('ui.log', (_, e) => {
-    logged.push(e.text)
-
-    return { value: undefined }
-  })
-  await openBig($, on)
-  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  await ui.press({ key: 'list:big-ts' })
-  expect(logged.some(line => line.includes('file:big-ts'))).toBe(true)
   await ui.unmount()
 })

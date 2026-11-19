@@ -2,13 +2,12 @@ import type { EngineInterface, RenderInput } from 'claude-code'
 
 import type { Review, ReviewFile } from '../types'
 import type { DiffFile } from '../core/types.ts'
-import { fileKey, hunksNear, layoutDiff } from '../core/diff/layout.ts'
+import { hunksNear, layoutDiff } from '../core/diff/layout.ts'
 import { renderHunk, renderHunkHeader } from '../core/diff/patchRenderer.ts'
 import { diffCache } from './state.ts'
 
-// The diff pane. Top to bottom: a head line, a status line, one list row per
-// file (a press scrolls to the file), then every file's header row and its
-// hunks, each hunk a diff Code under a header row. Only the hunks near the
+// The diff pane. Top to bottom: a head line, a status line, then every file's
+// header row and its hunks, each hunk a diff Code under a header row. Only the hunks near the
 // scroll window are drawn; the rest are Boxes of the same height, so the
 // tree keeps the rows core/diff/layout.ts computes and a drawing stays well
 // under the engine's 100,000 characters (research note, findings 4 and 5).
@@ -17,13 +16,11 @@ import { diffCache } from './state.ts'
 // Review in and takes the presses back through PaneActions.
 
 export interface PaneActions {
-  /** Brings the element with this key to the top of the pane. */
-  scrollTo(key: string): void
   /** Hides or shows a file's hunks. */
   toggleFold(fileId: string): void
 }
 
-/** Rows above the file list: the head line and the status line. */
+/** Rows above the first file: the head line and the status line. */
 const HEAD_ROWS = 2
 /** Hunk text one drawing may hold. The engine cuts a drawing at 100,000
  * characters; the rest of the tree is small, so this leaves room. */
@@ -43,10 +40,6 @@ export function plural(n: number, word: string): string {
 
 function counts(f: { binary: boolean; additions: number; deletions: number }): string {
   return f.binary ? 'binary' : `+${f.additions} −${f.deletions}`
-}
-
-function listLabel(f: ReviewFile): string {
-  return `${BADGES[f.status]} ${f.path}  ${counts(f)}${f.dirty ? ' ●' : ''}${f.folded ? ' (folded)' : ''}`
 }
 
 function fileHeader(f: DiffFile): string {
@@ -85,7 +78,6 @@ export function renderPane($: EngineInterface, e: RenderInput<'Pane'>, current: 
   const diff = info !== null && cached !== null && cached.key === info.key ? cached.diff : null
   const folded = new Set(files.filter(f => f.folded).map(f => f.id))
 
-  const scrollTo = (key: string) => () => actions.scrollTo(key)
   const toggleFold = (id: string) => () => actions.toggleFold(id)
 
   const sections = []
@@ -155,9 +147,6 @@ export function renderPane($: EngineInterface, e: RenderInput<'Pane'>, current: 
       <Text dimColor wrap="truncate-end">
         {statusLine(current)}
       </Text>
-      {files.map(f => (
-        <Button key={`list:${f.id}`} plain label={listLabel(f)} onPress={scrollTo(fileKey(f.id))} />
-      ))}
       {current.phase === 'open' && diff === null && <Text dimColor>Loading the diff…</Text>}
       {sections}
     </Box>

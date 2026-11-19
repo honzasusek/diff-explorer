@@ -19,31 +19,31 @@ const diff: Diff = {
   deletions: 0,
 };
 
-test("layout counts head, list, file headers and hunk rows", () => {
+test("layout counts head, file headers and hunk rows", () => {
   const layout = layoutDiff(diff, new Set(), 2);
   assert.deepEqual(
     layout.files.map((f) => [f.key, f.top, f.rows, f.hunks.map((h) => [h.key, h.top, h.rows])]),
     [
-      ["file:a", 5, 11, [["hunk:a:0", 6, 4], ["hunk:a:1", 10, 6]]],
-      ["file:b", 16, 1, []],
-      ["file:c", 17, 12, [["hunk:c:0", 18, 11]]],
+      ["file:a", 2, 11, [["hunk:a:0", 3, 4], ["hunk:a:1", 7, 6]]],
+      ["file:b", 13, 1, []],
+      ["file:c", 14, 12, [["hunk:c:0", 15, 11]]],
     ],
   );
-  assert.equal(layout.rows, 29);
+  assert.equal(layout.rows, 26);
 });
 
 test("a folded file keeps its header row and nothing else", () => {
   const layout = layoutDiff(diff, new Set(["a"]), 2);
-  assert.deepEqual(layout.files.map((f) => [f.top, f.rows]), [[5, 1], [6, 1], [7, 12]]);
-  assert.equal(layout.rows, 19);
+  assert.deepEqual(layout.files.map((f) => [f.top, f.rows]), [[2, 1], [3, 1], [4, 12]]);
+  assert.equal(layout.rows, 16);
 });
 
 test("hunksNear picks the hunks crossing the widened window, in order", () => {
   const layout = layoutDiff(diff, new Set(), 2);
   const keys = (window: { offset: number; bodyRows: number }) => hunksNear(layout, window).map((h) => h.key);
   assert.deepEqual(keys({ offset: 0, bodyRows: 4 }), ["hunk:a:0", "hunk:a:1"]);
-  assert.deepEqual(keys({ offset: 0, bodyRows: 2 }), []);
-  assert.deepEqual(keys({ offset: 17, bodyRows: 2 }), ["hunk:a:1", "hunk:c:0"]);
+  assert.deepEqual(keys({ offset: 0, bodyRows: 2 }), ["hunk:a:0"]);
+  assert.deepEqual(keys({ offset: 14, bodyRows: 2 }), ["hunk:a:1", "hunk:c:0"]);
   assert.deepEqual(keys({ offset: 20, bodyRows: 2 }), ["hunk:c:0"]);
   assert.deepEqual(keys({ offset: 100, bodyRows: 2 }), []);
 });

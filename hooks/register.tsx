@@ -170,10 +170,6 @@ export const register: Register = on => {
     const current = await read($, review)
 
     return renderPane($, e, current, {
-      scrollTo: key =>
-        void $.ui
-          .scroll({ in: PANE, to: { key }, block: 'start' })
-          .catch(err => $.ui.log(`diff-explorer: could not scroll to ${key}: ${describeError(err)}`)),
       toggleFold: id =>
         void update($, review, r =>
           r === null || r.files === null

@@ -5,14 +5,14 @@
 // keyed hunk lands even when that hunk is not drawn (research note, findings
 // 4 and 5).
 //
-// Rows, top to bottom: `headRows` fixed rows, one list row per file, then per
-// file a header row and, unless the file is folded or binary, per hunk a header
-// row plus one row per line. The engine draws no `@@` row of its own for a
-// diff Code, so the hunk header row is the pane's.
+// Rows, top to bottom: `headRows` fixed rows, then per file a header row and,
+// unless the file is folded or binary, per hunk a header row plus one row per
+// line. The engine draws no `@@` row of its own for a diff Code, so the hunk
+// header row is the pane's.
 //
 // For a Diff of two files, A with hunks of 3 and 5 lines and B binary, with
-// two head rows: list rows 2 and 3, A's header at row 4, its hunks at rows 5
-// (4 rows) and 9 (6 rows), B's header at row 15, 16 rows in all.
+// two head rows: A's header at row 2, its hunks at rows 3 (4 rows) and 7
+// (6 rows), B's header at row 13, 14 rows in all.
 import type { Diff, DiffFile, Hunk } from "../types.ts";
 
 export interface HunkSlot {
@@ -59,7 +59,7 @@ export function hunkRows(hunk: Hunk): number {
 }
 
 export function layoutDiff(diff: Diff, folded: ReadonlySet<string>, headRows: number): Layout {
-  let top = headRows + diff.files.length;
+  let top = headRows;
   const files = diff.files.map((file): FileSlot => {
     const fileTop = top;
     top += 1;

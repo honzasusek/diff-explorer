@@ -162,8 +162,7 @@ Events, each a one-line hook over a core call:
 
 Tree, top to bottom, all engine elements (`Box`, `Text`, `Button`, `Code`):
 
-- A file list: one row per File Change with status, counts, dirty dot, and a fold toggle; pressing a row scrolls to the file via `$.ui.scroll({ in: 'explore', to: <file key> })`.
-- Per File Change, a header `Box` keyed by path: path, status, counts, `[+file]` (`captureFile`), `[fold]`.
+- Per File Change, a header `Box` keyed by path: status, path, counts, dirty dot, `[+file]` (`captureFile`), `[fold]`. There is no separate file list; the headers are the overview, and a chip scrolls the pane to its lines via `$.ui.scroll({ in: 'explore', to: <key> })`.
 - Per Hunk, a header row with the `@@` text and `[+hunk]` (`captureHunk`), then a `Code` with `format: 'diff'`, `source: renderHunk(hunk)`, `path: file.path`, `wrap: 'truncate-end'`, and beside it a column of `plain` `Button`s, one per row, labelled with the line number. The engine draws no `@@` row of its own, so a hunk takes exactly one row per line and the spike showed the column aligns row for row (research note, finding 2).
 - Files over the fold threshold (default 1,500 changed lines) start folded. The hook renders the hunks whose rows fall inside `scroll.offset − 2 × bodyRows .. + 3 × bodyRows` and, for the rest, a keyed `Box` whose `height` is the hunk's row count, so the tree's rows never change, `$.ui.scroll` to a key lands exactly even on an undrawn hunk, and a drawing stays under 100,000 characters for any PR size (the spike's 3,100-line PR drew at most 22,000). Every header `Text` is `wrap: 'truncate-end'` so it stays one row. The engine asks again on every scroll, so the window follows the reader.
 - A drag's `$.ui.selection().text` is the code only, without gutter numbers or markers, so `locate` matches by content.
@@ -237,7 +236,7 @@ Each bullet that ends with a commit message is one local commit, made as soon as
 ### Phase 2: diff pane (1 day)
 
 - Spike, throwaway, half a day, on a real 3,000-line PR: answers the open questions in the research note (one hunk per `Code`, the 100,000-character budget and windowing by scroll, gutter button alignment, the shape of `$.ui.selection().text`, dock behaviour at 100 and 130 columns, `$.ui.scroll` to a keyed `Box`). Findings go into the research note. `docs: mod spike findings`
-- The pane proper: per-hunk `Code`, file headers, folding, windowing, dirty dots, file list with scroll-to. `feat: diff pane`
+- The pane proper: per-hunk `Code`, file headers with dirty dots, folding, windowing. `feat: diff pane`
 
 ### Phase 3: Code Refs (1 day)
 
