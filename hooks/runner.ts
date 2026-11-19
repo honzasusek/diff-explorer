@@ -6,13 +6,13 @@ import type { Runner } from '../core/workspace/runner.ts'
 export function engineRunner($: EngineInterface): Runner {
   return {
     async run(argv, opts = {}) {
-      const { exitCode, stdout, stderr } = await $.process.run(argv, {
+      const { exitCode, stdout, stderr, isStdoutTruncated } = await $.process.run(argv, {
         cwd: opts.cwd,
         stdin: opts.stdin,
         timeoutMs: opts.timeoutMs,
       })
 
-      return { exitCode, stdout, stderr }
+      return { exitCode, stdout, stderr, isStdoutTruncated }
     },
   }
 }

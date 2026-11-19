@@ -65,4 +65,20 @@ Measured on Claude Code 2.1.327 with a throwaway mod that drew the hunks of hono
 5. **Scroll-to-key works on a placeholder.** `$.ui.scroll({ in, to: { key }, block: 'start' })` resolved `{}` and moved the window to a keyed `Box` that stood in for an undrawn hunk; the drawing that followed put the real hunk on the same rows. This holds only while the tree's row count is exact: every header `Text` is `wrap: 'truncate-end'` (one row), and a placeholder `Box` has `height` equal to the rows it replaces. With that, `contentRows` equalled the mod's own count (3,264) at every scroll.
 6. **Where the pane sits.** In a fullscreen terminal: 100 columns → `inline` above the prompt, `bodyColumns` 96, `bodyRows` 11 of 40 (a third, less the frame); 130 columns → `dock`, `bodyColumns` 57, the transcript 72 wide, `bodyRows` 33 of 40; 160 columns → `dock`, `bodyColumns` 71, the transcript 88, `bodyRows` 38 of 45. A `columns` request on `$.ui.open` is capped at 45% of the terminal, so asking for more than that gives the cap. `e.viewport.columns` is the transcript's width, not the terminal's; `presentation.columns` on `command.run` is the terminal's.
 
+## Large-diff pass (2026-11-19)
+
+Measured on Claude Code 2.1.327 with the finished pane, in the hono clone, the working tree against the merge-base with `origin/main`: 122 files, 258 hunks, 13,326 diff lines, 11,565 pane rows, a 481 KB patch. Driven in a pseudo-terminal at 160 columns (the pane docked at 71 body columns, 38 body rows), a wheel tick or a PageDown measured from the key to the first change of the pane's text.
+
+| What | Result |
+|---|---|
+| `/explore . origin/main` to "Opened working tree" | 0.5 s |
+| wheel tick down, 40 of them | median 27 ms, p95 68 ms, max 74 ms, none missed |
+| PageDown with the pane focused, 15 | median 33 ms, max 45 ms |
+| wheel tick up, 15 | median 29 ms, max 41 ms |
+| the pane's own work per draw (`layoutDiff`, `hunksNear`, `renderHunk` of the window), 60 offsets | median 0.03 ms, max 0.55 ms; at most 46,000 characters drawn |
+| `Workspace.diff()`, one `git diff` | 43 ms warm, 464 ms cold |
+| `Workspace.diff()` forced per file (122 files) | 991 ms, about 8 ms per git call |
+
+So a scroll costs what the engine's redraw costs, around 30 ms, and the mod's part of it is below a millisecond: the whole tree is rebuilt on every draw and that is fine. Nothing was optimised. The per-file path (`git diff --name-status -z`, then one `git diff` per file) runs only when the Runner reports the whole patch cut at the engine's 4 MiB; a file whose own patch is still cut keeps its counts from `git diff --numstat` and no hunks, and the pane header says "too large to draw". Forced on the 36-file `v5.0.0-rc.0` diff with a 10,000-character cap, four files came back so and the counts matched the whole patch's.
+
 Also seen: `focus: true` on `$.ui.open` gives the pane the keys at once, so hotkeys work right after the command; the terminal enables SGR mouse tracking (modes 1000, 1002, 1003, 1006), which is how the engine sees drags and wheel ticks; and a merged PR's branch is usually deleted, so `gh pr checkout` fails on it (fixed in the Workspace with a `refs/pull/N/head` fetch).

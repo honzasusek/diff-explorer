@@ -1,7 +1,7 @@
 // The Workspace: the session's checkout, a Base to diff against, and the
 // Diff of the working tree against it. Everything git and gh is hidden here
 // and reaches the outside only through the Runner port.
-import type { Diff, DiffFile, PRMeta, WorkspaceInfo } from "../types.ts";
+import type { Diff, DiffFile, FileStatus, PRMeta, WorkspaceInfo } from "../types.ts";
 import type { Runner, RunResult } from "./runner.ts";
 import type { Target } from "./target.ts";
 import { WorkspaceError } from "./errors.ts";
@@ -22,6 +22,8 @@ export interface Workspace {
 }
 
 const GIT = ["git", "-c", "core.quotePath=false"];
+/** The patch as the parser wants it: no colour, no external driver, renames detected, three context lines. */
+const DIFF_ARGS = ["diff", "--no-color", "--no-ext-diff", "-M", "-U3"];
 const SLOW_MS = 600_000;
 const DIFF_MS = 120_000;
 const PR_FIELDS = "number,title,body,author,url,baseRefName,headRefName,headRefOid,state,isDraft,additions,deletions,changedFiles";
@@ -40,6 +42,36 @@ interface RunOpts {
   /** Exit codes that are not failures. */
   ok?: number[];
   timeoutMs?: number;
+}
+
+/** One changed file as `git diff --name-status -z` lists it: a rename or copy names the old path, then the new. */
+interface Listed {
+  status: FileStatus;
+  paths: string[];
+}
+
+const STATUS_OF: Record<string, FileStatus> = { A: "added", D: "deleted", R: "renamed", C: "copied" };
+
+/** `git diff --name-status -z -M`: "M NUL path NUL" per file, "R100 NUL old NUL new NUL" for a rename. */
+function parseNameStatus(out: string): Listed[] {
+  const parts = out.split("\0");
+  const listed: Listed[] = [];
+  for (let i = 0; i + 1 < parts.length; ) {
+    const letter = parts[i]?.[0] ?? "";
+    const status = STATUS_OF[letter] ?? "modified";
+    const two = letter === "R" || letter === "C";
+    const paths = two ? [parts[i + 1] ?? "", parts[i + 2] ?? ""] : [parts[i + 1] ?? ""];
+    if (paths.every((p) => p !== "")) listed.push({ status, paths });
+    i += two ? 3 : 2;
+  }
+  return listed;
+}
+
+/** The counts of `git diff --numstat -z` for one file: "add TAB del TAB path NUL", "- TAB -" for a binary file. */
+function parseNumstat(out: string): { additions: number; deletions: number; binary: boolean } {
+  const [a = "", d = ""] = out.split("\t");
+  const binary = a === "-";
+  return { additions: binary ? 0 : Number(a) || 0, deletions: binary ? 0 : Number(d) || 0, binary };
 }
 
 function messageOf(err: unknown): string {
@@ -239,10 +271,35 @@ export function createWorkspace(runner: Runner, cwd: string, opened?: WorkspaceI
     return info;
   }
 
+  /** A file whose own patch the Runner cut: its counts from numstat, no
+   * hunks, marked so the pane can say it is too large to draw. */
+  async function tooLarge(baseSha: string, listed: Listed): Promise<DiffFile> {
+    const res = await git(["diff", "--numstat", "-z", "-M", baseSha, "--", ...listed.paths], { timeoutMs: DIFF_MS });
+    const counts = parseNumstat(res.stdout);
+    const oldPath = listed.status === "added" ? null : (listed.paths[0] ?? null);
+    const newPath = listed.status === "deleted" ? null : (listed.paths[listed.paths.length - 1] ?? null);
+    const path = newPath ?? oldPath ?? "";
+    return { id: fileId(path), oldPath, newPath, path, status: listed.status, hunks: [], truncated: true, ...counts };
+  }
+
+  /** The Diff one file at a time, for a patch the Runner cut at its cap
+   * (the engine keeps 4 MiB of a stream): the changed files from
+   * `git diff --name-status`, each diffed alone. */
+  async function diffPerFile(baseSha: string): Promise<DiffFile[]> {
+    const listed = await git(["diff", "--name-status", "-z", "-M", baseSha], { timeoutMs: DIFF_MS });
+    const files: DiffFile[] = [];
+    for (const entry of parseNameStatus(listed.stdout)) {
+      const res = await git([...DIFF_ARGS, baseSha, "--", ...entry.paths], { timeoutMs: DIFF_MS });
+      if (res.isStdoutTruncated === true) files.push(await tooLarge(baseSha, entry));
+      else files.push(...parseUnifiedDiff(res.stdout));
+    }
+    return files;
+  }
+
   async function diff(): Promise<Diff> {
     if (!info) throw new WorkspaceError("GitFailed", "no target is open");
-    const patch = await git(["diff", "--no-color", "--no-ext-diff", "-M", "-U3", info.baseSha], { timeoutMs: DIFF_MS });
-    const files = parseUnifiedDiff(patch.stdout);
+    const patch = await git([...DIFF_ARGS, info.baseSha], { timeoutMs: DIFF_MS });
+    const files = patch.isStdoutTruncated === true ? await diffPerFile(info.baseSha) : parseUnifiedDiff(patch.stdout);
     const entries = await status();
     const dirty = new Set<string>();
     for (const e of entries) {
@@ -265,6 +322,10 @@ export function createWorkspace(runner: Runner, cwd: string, opened?: WorkspaceI
       };
       file.status = "added";
       file.oldPath = null;
+      if (res.isStdoutTruncated === true) {
+        file.hunks = [];
+        file.truncated = true;
+      }
       files.push(file);
     }
     for (const f of files) {

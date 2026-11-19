@@ -56,8 +56,9 @@ function counts(f: { binary: boolean; additions: number; deletions: number }): s
 
 function fileHeader(f: DiffFile): string {
   const from = f.oldPath !== null && f.oldPath !== f.path ? ` ← ${f.oldPath}` : ''
+  const note = f.truncated === true ? ' · too large to draw' : ''
 
-  return `${BADGES[f.status]} ${f.path}${from}  ${counts(f)}${f.dirty === true ? ' ●' : ''}`
+  return `${BADGES[f.status]} ${f.path}${from}  ${counts(f)}${note}${f.dirty === true ? ' ●' : ''}`
 }
 
 function statusLine(current: Review): string {

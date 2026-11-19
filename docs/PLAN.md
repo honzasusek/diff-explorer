@@ -259,7 +259,7 @@ Each bullet that ends with a commit message is one local commit, made as soon as
 
 - `userConfig`: default base ref, fold threshold, pane rows when inline. Error toasts for every Workspace error. `feat: config and error toasts`
 - README with the install line and a `.claude-plugin/marketplace.json`; tests green on `terminal` and `desktop`. `docs: readme and marketplace manifest`
-- Large-PR pass: a 5,000-row Diff must scroll without visible lag; measure the per-file diff path. One commit.
+- Large-PR pass: a 5,000-row Diff must scroll without visible lag; measure the per-file diff path. One commit. `perf: large diffs scroll and a cut patch is fetched per file`
 
 Total: four to five days, against seven for the parked plan.
 
@@ -283,9 +283,9 @@ Web layer as in appendix A. Review comments via `gh api` behind an explicit conf
 - **Gutter buttons may not align with `Code` rows.** Then selection is drag plus `/add`, hunk and file buttons, and typed refs, which already cover every case; the two-click path is a convenience.
 - **The shape of selected text is unverified.** `locateText` handles rows with and without a gutter prefix; the spike confirms which it is.
 - **Pane placement.** Docked from 110 columns in a fullscreen terminal, inline above the prompt otherwise. The dock is capped at 45% of the terminal: 57 body columns at 130, 71 at 160 (research note, finding 6), so long lines are truncated and the reader widens the dock by hand. Inline works but the pane competes with the transcript for rows; `userConfig` sets its rows.
-- **`$.process.run` limits.** 4 MiB per stream and a 30-second default timeout: per-file diffs past the cap, `timeoutMs` on fetches.
+- **`$.process.run` limits.** 4 MiB per stream and a 30-second default timeout: the Runner reports a cut stream, and a cut patch is fetched per file (a file still cut keeps its counts and is drawn as "too large"); `timeoutMs` on fetches.
 - **Hot reload needs an interactive session.** Development runs `claude --plugin-dir .` in a second terminal; `claude -p` and SDK hosts load the folder without reloading.
-- **Redraw cost.** The whole pane tree is rebuilt on each state change; windowing bounds it, and the Phase 5 pass measures it.
+- **Redraw cost.** The whole pane tree is rebuilt on each state change; windowing bounds it. Measured in the Phase 5 pass on an 11,565-row diff: a wheel tick redraws in about 30 ms, of which the mod's own work is under a millisecond (research note, large-diff pass).
 - **No `Input` outside the terminal.** Typed refs go through the prompt, which exists everywhere.
 
 ## Appendix A: the future web layer

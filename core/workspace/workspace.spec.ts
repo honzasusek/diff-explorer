@@ -259,3 +259,38 @@ test("a workspace resumes from stored info without reopening", async () => {
   const resumed = createWorkspace(nodeRunner, work, info);
   assert.equal((await resumed.diff()).files.length, 3);
 });
+
+/** The real runner with stdout cut at `cap` bytes and flagged, as the engine's process call cuts a stream at 4 MiB. */
+function capped(cap: number): Runner {
+  return {
+    async run(argv, opts) {
+      const res = await nodeRunner.run(argv, opts);
+      return res.stdout.length > cap ? { ...res, stdout: res.stdout.slice(0, cap), isStdoutTruncated: true } : res;
+    },
+  };
+}
+
+test("a patch the runner cuts is fetched per file; a file still cut keeps its counts and is marked", async () => {
+  const { work } = await makeRepos();
+  await sh(work, "git", "checkout", "--quiet", "feature");
+  writeFileSync(join(work, "scratch.txt"), "s1\ns2\n");
+  const whole = await createWorkspace(nodeRunner, work).open({ kind: "worktree" });
+  const plain = await createWorkspace(nodeRunner, work, whole).diff();
+  const size = (await nodeRunner.run(["git", "diff", "-M", "-U3", whole.baseSha], { cwd: work })).stdout.length;
+
+  // Every file's own patch fits under the cap, so the Diff is the same.
+  assert.deepEqual(await createWorkspace(capped(size - 1), work, whole).diff(), plain);
+
+  // Under a cap no patch fits, each file keeps its counts and no hunks.
+  const cut = await createWorkspace(capped(40), work, whole).diff();
+  assert.deepEqual(
+    cut.files.map((f) => [f.path, f.status, f.oldPath, f.additions, f.deletions, f.hunks.length, f.truncated ?? false]),
+    [
+      ["a.txt", "modified", "a.txt", 1, 0, 0, true],
+      ["c.txt", "renamed", "b.txt", 0, 0, 0, true],
+      ["new.txt", "added", null, 1, 0, 0, true],
+      ["scratch.txt", "added", null, 0, 0, 0, true],
+    ],
+  );
+  assert.deepEqual([cut.additions, cut.deletions], [2, 0]);
+});

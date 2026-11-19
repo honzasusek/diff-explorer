@@ -13,6 +13,9 @@ export interface RunResult {
   exitCode: number;
   stdout: string;
   stderr: string;
+  /** True when the adapter cut stdout at its cap (the engine's process call
+   * keeps 4 MiB of a stream); what was cut is gone, not waiting. */
+  isStdoutTruncated?: boolean;
 }
 
 export interface Runner {

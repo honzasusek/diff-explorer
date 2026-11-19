@@ -39,6 +39,9 @@ export interface DiffFile {
   hunks: Hunk[];
   /** True when the file differs from the committed Head (a Dirty File). */
   dirty?: boolean;
+  /** True when the file's own patch was larger than the Runner could carry:
+   * the counts stand, the hunks are empty and the pane says so. */
+  truncated?: boolean;
 }
 
 export interface Diff {

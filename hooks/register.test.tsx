@@ -50,12 +50,17 @@ function gitAnswer(argv: readonly string[], patch = PATCH, status = ''): Answer 
   if (line.includes('rev-parse HEAD')) return ok('head000\n')
   if (line.includes('diff --no-color --no-ext-diff -M -U3 base000')) return ok(patch)
   if (line.includes('status --porcelain=v1 -z')) return ok(status)
+  if (line.includes('diff --name-status -z -M base000')) return ok('M\0src/client.ts\0')
+  if (line.includes('diff --numstat -z -M base000 -- src/client.ts')) return ok('2\t1\tsrc/client.ts\0')
   if (line.includes('restore --source=HEAD') || line.includes('clean --force')) return ok('')
 
   return { exitCode: 1, stdout: '', stderr: `unexpected: ${line}` }
 }
 
-const value = (a: Answer) => ({ value: { ...a, isStdoutTruncated: false, isStderrTruncated: false } })
+const value = (a: Answer, isStdoutTruncated = false) => ({ value: { ...a, isStdoutTruncated, isStderrTruncated: false } })
+
+/** The answer as the engine gives it past its cap: cut at `cap` bytes and flagged. */
+const cut = (a: Answer, cap: number) => (a.stdout.length > cap ? value({ ...a, stdout: a.stdout.slice(0, cap) }, true) : value(a))
 
 test('/explore . opens the working tree and the pane shows its files', async ($, on) => {
   mock.clock(on, { now: 1_700_000_000_000 })
@@ -619,5 +624,23 @@ test('a refresh that fails says so in a toast, with the hint, and in the pane', 
   expect(toasts).toContain('Could not refresh the diff: not inside a git repository. Start Claude Code inside the repository.')
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await ui.find({ type: 'Text', text: /^Error: not inside a git repository/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a patch the engine cuts at its cap is fetched per file; a file still cut says so in the pane', async ($, on) => {
+  mock.clock(on)
+  on('ui.status', () => ({ value: undefined }))
+  on('command.register', (_, e) => ({ value: { command: e.name } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('session.cwd', () => ({ value: '/repo' }))
+  on('process.run', (_, e) => cut(gitAnswer(e.argv), 100))
+
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  expect(await run($, 'explore', '.')).toBe('Opened working tree: 1 file, +2 −1 against origin/HEAD.')
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /^M src\/client\.ts\s+\+2 −1 · too large to draw$/ })).toBeDefined()
+  expect(await ui.findAll({ type: 'Code' })).toHaveLength(0)
+  expect(await ui.find({ key: 'fold:src-client-ts' })).toBeUndefined()
   await ui.unmount()
 })
