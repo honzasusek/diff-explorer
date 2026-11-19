@@ -5,7 +5,7 @@ import type { Review, ReviewFile, ReviewInfo } from '../types'
 import type { CodeRef, Diff, DiffFile, HunkRow, WorkspaceInfo } from '../core/types.ts'
 import { basketReducer, markStale } from '../core/basket/basketReducer.ts'
 import { fileKey, hunkKey } from '../core/diff/layout.ts'
-import { hunkOfRef, refLabel, refsInText, renderRefs, suggestRefs } from '../core/diff/refs.ts'
+import { hunkOfRef, promptWithRefs, refLabel, refsInText, suggestRefs } from '../core/diff/refs.ts'
 import { captureFile, captureHunk, captureRows, gutterPress } from '../core/diff/selection.ts'
 import { SECTION_ID, reviewSection } from '../core/prompt/reviewSection.ts'
 import type { ReviewSummary } from '../core/prompt/reviewSection.ts'
@@ -398,10 +398,11 @@ export const register: Register = on => {
     return result
   })
 
-  // The refs ride along as code_ref blocks after the prompt's own words, the
-  // Basket's first and then those typed as #path:from-to tokens, and the
-  // Basket empties once the prompt has entered. A slash command's line and a
-  // hidden prompt take no rewrite, so they pass untouched.
+  // The refs ride along as code_ref blocks after the prompt's own words and
+  // a lead-in saying they are what the request is about, the Basket's first
+  // and then those typed as #path:from-to tokens, and the Basket empties
+  // once the prompt has entered. A slash command's line and a hidden prompt
+  // take no rewrite, so they pass untouched.
   on('prompt.submit', async ($, e, next) => {
     if (e.command !== undefined || e.isMeta === true) return next(e)
     const diff = await openDiff($)
@@ -409,7 +410,7 @@ export const register: Register = on => {
     for (const error of typed.errors) $.ui.toast(error)
     const refs = typed.refs.reduce((all, ref) => basketReducer(all, { type: 'add', ref }), await read($, basket))
     if (refs.length === 0) return next(e)
-    const result = await next({ ...e, text: `${e.text}\n\n${renderRefs(refs, await staleIds($, refs))}` })
+    const result = await next({ ...e, text: promptWithRefs(e.text, refs, await staleIds($, refs)) })
     if (result.drop === undefined) await update($, basket, () => [])
 
     return result

@@ -44,6 +44,24 @@ export function renderRef(ref: CodeRef, id: string, stale = false): string {
   return [open, ...rows, "</code_ref>"].join("\n");
 }
 
+/** The line before the blocks in a sent prompt: the blocks are what the
+ * request is about, not a quote beside it. */
+export const REFS_LEAD_IN = "Selected in the diff pane, the lines this request is about:";
+
+/** The prompt as sent: the person's words, a blank line, the lead-in, then
+ * the blocks. "rename it" with one ref becomes
+ *
+ *   rename it
+ *
+ *   Selected in the diff pane, the lines this request is about:
+ *
+ *   <code_ref id="r1" ...>
+ *   ...
+ *   </code_ref> */
+export function promptWithRefs(text: string, refs: readonly CodeRef[], stale?: ReadonlySet<string>): string {
+  return `${text}\n\n${REFS_LEAD_IN}\n\n${renderRefs(refs, stale)}`;
+}
+
 /** The whole Basket as `r1`, `r2`, ... in order, a blank line between blocks.
  * A ref whose id is in `stale` opens with `stale="true"`: its lines have
  * changed since they were captured (core/basket/basketReducer.ts). */

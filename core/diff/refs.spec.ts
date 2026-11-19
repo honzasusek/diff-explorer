@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { CLIENT, sampleDiff, sampleFile } from "../testing/sample.ts";
-import { hunkOfRef, matchFiles, parseRefToken, refLabel, refName, refsInText, renderRefs, suggestRefs } from "./refs.ts";
+import { hunkOfRef, matchFiles, parseRefToken, promptWithRefs, refLabel, refName, refsInText, renderRefs, suggestRefs } from "./refs.ts";
 import { captureFile, captureRef, captureRows } from "./selection.ts";
 import type { CodeRef } from "../types.ts";
 
@@ -85,6 +85,15 @@ test("refsInText picks the #path:from-to tokens of a prompt, once each, and repo
   assert.deepEqual(found.refs.map((r) => r.id), ["src/payments/client.ts:new:41-43", "src/payments/retry.ts:new:1-3"]);
   assert.deepEqual(found.errors, ["No file in the diff matches nope.ts"]);
   assert.deepEqual(refsInText(diff, "no refs here, a#b neither"), { refs: [], errors: [] });
+});
+
+test("a sent prompt puts the lead-in between the words and the blocks", () => {
+  const ref = newRef(41, 42);
+  assert.equal(
+    promptWithRefs("rename it", [ref]),
+    `rename it\n\nSelected in the diff pane, the lines this request is about:\n\n${renderRefs([ref])}`,
+  );
+  assert.ok(promptWithRefs("x", [ref], new Set([ref.id])).includes('stale="true"'));
 });
 
 test("a stale ref's block says so in its tag", () => {

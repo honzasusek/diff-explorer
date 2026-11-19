@@ -357,6 +357,8 @@ test('a prompt carries the basket and the typed refs as code_ref blocks, then th
     [
       'why is this retry safe? also #retry.ts:1-2',
       '',
+      'Selected in the diff pane, the lines this request is about:',
+      '',
       '<code_ref id="r1" file="src/payments/client.ts" side="new" lines="41-43">',
       '41 +|   if (!res.ok && retryable(res)) {',
       '42 +|     return retry(() => charge(url, opts));',

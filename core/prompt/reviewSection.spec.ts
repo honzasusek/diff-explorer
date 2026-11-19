@@ -28,6 +28,7 @@ test("the section names the review, the base commit, the files and the code_ref 
   assert.ok(text.includes("Files in the diff:\n- modified src/payments/client.ts\n- added src/payments/retry.ts\n\n"));
   assert.ok(text.includes("<code_ref> blocks"));
   assert.ok(text.includes('stale="true"'));
+  assert.ok(text.includes("apply it there unless the request itself names a wider scope."));
   assert.ok(text.endsWith("do not commit, push or open a pull request in it unless they ask."));
 });
 

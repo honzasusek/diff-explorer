@@ -38,6 +38,7 @@ const CODE_REF_HELP = [
   'Each block names the file, the side ("new" is the version under review, "old" the base version) and the line range on that side.',
   "Each row is the line's number on that side (blank for a line of the other side), a marker (+ added, - deleted, blank unchanged), a bar, then the line.",
   'A block with stale="true" holds lines that have changed since they were selected; read the file before relying on them.',
+  "A request that carries code_ref blocks is about those lines: apply it there unless the request itself names a wider scope.",
 ].join(" ");
 
 export function reviewSection(review: ReviewSummary): string {
