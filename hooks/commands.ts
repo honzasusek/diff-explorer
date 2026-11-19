@@ -56,6 +56,36 @@ export async function runRef(args: string, diff: Diff | null, add: (ref: CodeRef
   return added(parsed.ref, await add(parsed.ref))
 }
 
+export interface RevertPorts {
+  /** Asks the person; true when they chose to revert. */
+  confirm(path: string): Promise<boolean>
+  /** Restores the file and refreshes the Diff. */
+  revert(path: string): Promise<void>
+}
+
+/** `/revert path`: restores a Dirty File to the committed version once the
+ * person has confirmed; the path is the one the pane shows. */
+export async function runRevert(
+  args: string,
+  files: readonly { path: string; dirty: boolean }[] | null,
+  ports: RevertPorts,
+): Promise<string> {
+  if (files === null) return NOTHING_OPEN
+  const path = args.trim()
+  if (path === '') return 'Usage: /revert <path>'
+  const file = files.find(f => f.path === path)
+  if (file === undefined) return `${path} is not in the diff.`
+  if (!file.dirty) return `${path} has no uncommitted changes.`
+  if (!(await ports.confirm(path))) return `Kept ${path}.`
+  try {
+    await ports.revert(path)
+  } catch (err) {
+    return `Could not revert ${path}: ${err instanceof Error ? err.message : String(err)}`
+  }
+
+  return `Reverted ${path}.`
+}
+
 export const NO_REFS = 'No refs. Select lines in the diff pane and run /add, or /ref path:from-to.'
 
 /** `/refs`: the Basket, one line per ref; `/refs clear` empties it. */

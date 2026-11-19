@@ -86,3 +86,10 @@ test("refsInText picks the #path:from-to tokens of a prompt, once each, and repo
   assert.deepEqual(found.errors, ["No file in the diff matches nope.ts"]);
   assert.deepEqual(refsInText(diff, "no refs here, a#b neither"), { refs: [], errors: [] });
 });
+
+test("a stale ref's block says so in its tag", () => {
+  const ref = newRef(41, 42);
+  assert.ok(renderRefs([ref]).startsWith('<code_ref id="r1" file="src/payments/client.ts" side="new" lines="41-42">\n'));
+  assert.ok(renderRefs([ref], new Set([ref.id])).startsWith('<code_ref id="r1" file="src/payments/client.ts" side="new" lines="41-42" stale="true">\n'));
+  assert.ok(renderRefs([ref], new Set(["other"])).startsWith('<code_ref id="r1" file="src/payments/client.ts" side="new" lines="41-42">\n'));
+});

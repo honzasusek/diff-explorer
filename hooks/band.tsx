@@ -5,9 +5,10 @@ import { refLabel } from '../core/diff/refs.ts'
 
 // The band above the prompt: the Basket as chips. A chip press scrolls the
 // pane to the ref, its [x] drops it, [add selection] adds the terminal
-// selection and [clear] empties the Basket. This file only draws; the
-// state lives in register.tsx, which takes the presses back through
-// BandActions.
+// selection and [clear] empties the Basket. A Stale Ref, one whose lines
+// the Diff no longer holds as captured, reads `client.ts:41-42 (stale)`.
+// This file only draws; the state lives in register.tsx, which takes the
+// presses back through BandActions.
 
 export interface BandActions {
   /** Scrolls the pane to the ref's hunk. */
@@ -17,7 +18,13 @@ export interface BandActions {
   clear(): void
 }
 
-export function renderBand($: EngineInterface, e: RenderInput<'AbovePrompt'>, basket: CodeRef[], actions: BandActions) {
+export function renderBand(
+  $: EngineInterface,
+  e: RenderInput<'AbovePrompt'>,
+  basket: CodeRef[],
+  stale: ReadonlySet<string>,
+  actions: BandActions,
+) {
   const { Box, Text, Button } = $.ui.resolve(e)
 
   return (
@@ -25,7 +32,12 @@ export function renderBand($: EngineInterface, e: RenderInput<'AbovePrompt'>, ba
       <Text dimColor>{basket.length === 0 ? 'refs: none' : 'refs:'}</Text>
       {basket.map(ref => (
         <Box key={`chip:${ref.id}`} flexDirection="row" gap={1}>
-          <Button key={`ref:${ref.id}`} plain label={refLabel(ref)} onPress={() => actions.show(ref)} />
+          <Button
+            key={`ref:${ref.id}`}
+            plain
+            label={stale.has(ref.id) ? `${refLabel(ref)} (stale)` : refLabel(ref)}
+            onPress={() => actions.show(ref)}
+          />
           <Button key={`drop:${ref.id}`} plain dimColor label="[x]" onPress={() => actions.remove(ref.id)} />
         </Box>
       ))}

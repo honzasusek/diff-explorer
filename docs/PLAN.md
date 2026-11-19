@@ -39,7 +39,7 @@ The mod checks the PR branch out in place (`gh pr checkout`), computes the Diff 
 2. **Select.** Three ways, detailed in 4.5: drag across lines in the pane (ordinary terminal text selection) and press `[add selection]` or type `/add`; click a first and a last line number in the gutter; or type `#client.ts:41-43` in the prompt, with typeahead after `#`. `[+hunk]` and `[+file]` take a whole Hunk or File Change. Each Code Ref appears as a chip in the band above the prompt; `[x]` drops it; pressing a chip scrolls the pane to its lines.
 3. **Ask.** Type in the normal prompt and press Enter. The mod appends the Basket as `code_ref` blocks to the message, so Claude sees the quoted lines with numbers and markers. The Basket empties after sending. The reply, tool calls, permission prompts and cost are Claude Code's own.
 4. **Edit.** Ask for a change; Claude's Edit asks for permission as it always does. After each Edit or Write the Diff is recomputed, the file gets a dirty marker in the pane, and any chip whose lines no longer match is marked stale. `/revert <path>` restores a Dirty File after a confirmation.
-5. **Come back.** `claude --resume` brings the Conversation back; the mod reopens the pane for the PR recorded for that repository and recomputes the Diff. `/explore` with no argument reopens the last PR in this repository.
+5. **Come back.** `claude --resume` brings the Conversation back. `/explore` with no argument reopens the last target opened in this repository and recomputes the Diff; a new process cannot tell a resume from a fresh start, so the pane does not open unasked.
 
 ## 3. What already exists
 
@@ -135,7 +135,7 @@ A `new`-side ref holds add and context lines numbered on the new Side; an `old`-
 | File | Interface it offers the rest of the mod | Hides |
 |---|---|---|
 | `register.tsx` | `export const register: Register` | which event is hooked with which matcher; nothing else |
-| `state.ts` | the pane id and the module-level `diff` cache | The atoms (`review` with the target, `WorkspaceInfo`, the file list and folds; later `basket`, `anchor`, `stale`) live in `register.tsx`: the validator reads every `update`'s atom in the file that calls it, so an atom is not imported from elsewhere. `$.state` keys are declared in `types/index.d.ts`; the Diff itself stays in a module variable and is recomputed on load because the state store is for small values |
+| `state.ts` | the pane id and the module-level `diff` cache | The atoms (`review` with the target, `WorkspaceInfo`, the file list and folds; `basket` and `anchor`; a Stale Ref is computed when the band draws, from the Basket and the Diff) live in `register.tsx`: the validator reads every `update`'s atom in the file that calls it, so an atom is not imported from elsewhere. `$.state` keys are declared in `types/index.d.ts`; the Diff itself stays in a module variable and is recomputed on load because the state store is for small values |
 | `runner.ts` | `Runner` over `$.process.run` | `cwd` from `$.session.cwd()`, `timeoutMs` for fetches, mapping of exit codes to Workspace errors |
 | `commands.ts` | `runAdd`, `runRef`, `runRefs`: the words of `/add`, `/ref` and `/refs`, over the open Diff and a basket port the hook passes in | argument parsing and the transcript wording; the atoms stay in `register.tsx` (validator rule), as does `/explore` |
 | `pane.tsx` | `renderPane($, e, review, actions)`, called by the `ui.render` hook for `{ component: 'Pane', requestId: 'explore' }` in `register.tsx` | the tree in 4.5 over `core/diff/layout.ts`; windowing by `scroll.offset` and `bodyRows`; the 100,000-character budget per drawing; presses go back through `actions` (`toggleFold`, `pressGutter`, `addHunk`, `addFile`) so the file only draws |
@@ -146,8 +146,7 @@ Events, each a one-line hook over a core call:
 
 | Event | Matcher | Does |
 |---|---|---|
-| `session.start` | | registers the commands; if `$.store` holds a target for this repository, recomputes the Diff and reopens the pane |
-| `session.cwd` | | drops the review when the directory changes |
+| `session.start` | | registers the commands; a review kept in `$.state` from before a reload comes back (pane reopened, Diff recomputed) unless the session now runs outside its checkout, which drops it. This build raises no event for a directory change, so the start is where it shows. `$.store` serves `/explore` with no argument only: a new process cannot tell a resume from a fresh start, so no pane opens unasked |
 | `command.run` | each command | 4.6 |
 | `ui.render` | `Pane`, `requestId: 'explore'` | draws the pane |
 | `ui.render` | `AbovePrompt` | draws the Basket band |
@@ -155,7 +154,7 @@ Events, each a one-line hook over a core call:
 | `prompt.autocomplete` | `token: /^#/` | `suggestRefs` over the current Diff |
 | `prompt.submit` | | appends `renderRefs` of the Basket and of the `#path:from-to` tokens in the text to `e.text`, then clears the Basket once `next` resolves without a drop; a slash command's line and a hidden prompt pass untouched |
 | `prompt.compose` | | appends one `session` section (`core/prompt/reviewSection.ts`): the target and title, head against base, the base commit for `git diff`, the file list as paths and statuses, how `code_ref` blocks are formatted, never commit or push. No counts or dirty marks: the engine renders the prompt every turn and a changed section loses the prompt cache, so the text holds still across Edits |
-| `tool.call` | `tool: Edit, Write, MultiEdit, NotebookEdit` | `await next(e)`, then `workspace.diff()`, `markStale`, redraw |
+| `tool.call` | `tool: ['Edit', 'Write', 'NotebookEdit']` (this build has no MultiEdit) | `await next(e)`; when the call was answered and the file lies in the checkout, `workspace.diff()` again. The dirty marks follow from the file list and the stale marks from `markStale` when the band draws; a sent prompt marks a Stale Ref's block `stale="true"` |
 | `ui.close` | `id: 'explore'` | keeps the review in state so `/explore` reopens it |
 
 ### 4.5 The pane and line selection
@@ -183,7 +182,7 @@ What the engine gives for free and the mod must not reimplement: wheel and key s
 ### 4.6 Commands
 
 ```
-/explore <number | url | owner/repo#n | branch> [base]   open the PR or branch; Phase 4 adds the no-argument form (the last one in this repository)
+/explore <number | url | owner/repo#n | branch> [base]   open the PR or branch; with no argument, the last target opened in this repository
 /explore . [base]                                        working tree against base (default origin/HEAD, then main, then master)
 /add                                              add the current terminal selection to the Basket
 /ref path:from-to [old]                           add a typed range

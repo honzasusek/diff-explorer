@@ -27,12 +27,12 @@ Source: the type declarations Claude Code 2.1.319 writes when the plugin-authori
 
 | Event | Input | Answer |
 |---|---|---|
-| `session.start`, `session.cwd` | | register commands, restore state |
+| `session.start` | `cwd`, `surface`, `isInteractive` | register commands, restore state. There is no `session.cwd` event in this build: `$.session.cwd()` is a call that answers the directory, so a directory change shows at the next start |
 | `command.run` | `command`, `args` (text after the name), `origin`, `presentation` | `{ text, exitCode? }` |
 | `prompt.submit` | `text` (as typed, pastes expanded), `command?`, `isMeta?` | `next({ ...e, text })` to rewrite, `{ drop }` to stop |
 | `prompt.autocomplete` | `text`, `cursor`, `token` (non-whitespace run ending at the cursor), `start`; matcher `{ token: /^#/ }` | `{ suggestions: [{ text }] }`; taking one writes `text` over the token |
 | `prompt.compose` | `model`, `promptModel`, `surfaces`, `tools`, `outputStyle`, `traits` | `next(e)` gives `{ sections: [{ id, text, scope }] }`; append one with `scope: 'session'` and an id `<plugin>:<name>`. Rendered at every request and not cached, so a section whose text changes between turns loses the prompt cache; the kit raises it with the full input (`$.prompt.compose({ model, promptModel, surfaces, tools, outputStyle, traits })`) |
-| `tool.call` | discriminated by `tool`; `tool_use_id`, `agentId` reserved; the tool's own arguments beside | `await next(e)` then act on the result; `{ deny }` to refuse |
+| `tool.call` | discriminated by `tool`; `tool_use_id`, `agentId` reserved; the tool's own arguments beside (`file_path` for Edit and Write, `notebook_path` for NotebookEdit; this build has no MultiEdit) | `await next(e)` then act on the result (`deny`, `isError`); `{ deny }` to refuse. A matcher leaf may be an array, any-of: `{ tool: ['Edit', 'Write', 'NotebookEdit'] }` |
 | `ui.press`, `ui.scroll`, `ui.close`, `ui.open` | | normally handled through element closures |
 
 ## Processes and files
@@ -40,6 +40,8 @@ Source: the type declarations Claude Code 2.1.319 writes when the plugin-authori
 - `$.process.run(argv, { cwd?, env?, stdin?, timeoutMs? })` resolves `{ exitCode, stdout, stderr, isStdoutTruncated, isStderrTruncated }`. Each stream is capped at 4 MiB; the default timeout is 30 seconds, the maximum ten minutes. `$.process.spawn` for long-running children.
 - `$.fs.read(path, { as })`, `write`, `list`, `exists`, `stat`; reads are bounded at 4 MiB.
 - `$.session.cwd()` resolves the session's working directory.
+- `$.store.get/set/delete/keys` keep JSON across sessions, 4 MiB in all; `get` answers `unknown`, so a value is checked before use. In the kit `mock.store(on, entries?)` answers it, the test's own `$` has no `store` noun, and one event takes one `on` per test: a test that wants to see the writes answers `store.get` and `store.set` itself instead of calling `mock.store`.
+- `$.ui.ask(question, options)` opens the engine's AskUserQuestion dialog and resolves to the label chosen; it rejects when dismissed. It is a `tool.call` of `AskUserQuestion`, so a test answers it with a hook on `{ tool: 'AskUserQuestion' }` returning `{ result: { questions: e.questions, answers: { [question]: label } } }`.
 
 ## Limits the plan designs around
 

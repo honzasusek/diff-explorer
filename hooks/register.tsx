@@ -3,17 +3,18 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Review, ReviewFile, ReviewInfo } from '../types'
 import type { CodeRef, Diff, DiffFile, HunkRow, WorkspaceInfo } from '../core/types.ts'
-import { basketReducer } from '../core/basket/basketReducer.ts'
+import { basketReducer, markStale } from '../core/basket/basketReducer.ts'
 import { fileKey, hunkKey } from '../core/diff/layout.ts'
 import { hunkOfRef, refLabel, refsInText, renderRefs, suggestRefs } from '../core/diff/refs.ts'
 import { captureFile, captureHunk, captureRows, gutterPress } from '../core/diff/selection.ts'
 import { SECTION_ID, reviewSection } from '../core/prompt/reviewSection.ts'
 import type { ReviewSummary } from '../core/prompt/reviewSection.ts'
+import { isInside, recentFor, recentReviews, remember } from '../core/workspace/recent.ts'
 import { describeTarget, parseTarget } from '../core/workspace/target.ts'
 import { createWorkspace } from '../core/workspace/workspace.ts'
 import { renderBand } from './band.tsx'
 import type { BandActions } from './band.tsx'
-import { runAdd, runRef, runRefs } from './commands.ts'
+import { runAdd, runRef, runRefs, runRevert } from './commands.ts'
 import type { Outcome } from './commands.ts'
 import { plural, renderPane } from './pane.tsx'
 import type { PaneActions } from './pane.tsx'
@@ -36,6 +37,11 @@ const FOLD_THRESHOLD = 1500
 
 /** Body columns to ask the dock for; the engine caps a dock at 45% of the terminal. */
 const PANE_COLUMNS = 80
+
+/** The store key of the last target per repository (core/workspace/recent.ts). */
+const RECENT_KEY = 'recent'
+
+const EXPLORE_USAGE = 'Usage: /explore <number | url | owner/repo#n | branch | .> [base ref]'
 
 function toInfo(info: WorkspaceInfo): ReviewInfo {
   return {
@@ -106,6 +112,13 @@ async function openDiff($: EngineInterface): Promise<Diff | null> {
   const cached = diffCache.current
 
   return current?.info !== null && current?.info !== undefined && cached?.key === current.info.key ? cached.diff : null
+}
+
+/** The ids of the refs whose lines the open Diff no longer holds as captured. */
+async function staleIds($: EngineInterface, refs: CodeRef[]): Promise<Set<string>> {
+  const diff = await openDiff($)
+
+  return new Set(diff === null ? [] : markStale(refs, diff))
 }
 
 /** Puts a ref in the Basket and says whether it was new there. */
@@ -205,6 +218,12 @@ async function openCurrent($: EngineInterface, current: Review): Promise<string>
       error: null,
     }
     await update($, review, r => (sameOpen(r) ? opened : r))
+    try {
+      const recent = recentReviews(await $.store.get(RECENT_KEY))
+      await $.store.set(RECENT_KEY, remember(recent, info.dir, { target: current.target, baseRef: current.baseRef }))
+    } catch (err) {
+      $.ui.log(`diff-explorer: could not remember ${current.label}: ${describeError(err)}`)
+    }
     const base = info.pr?.baseRefName ?? info.baseRef
 
     return `Opened ${current.label}: ${plural(diff.files.length, 'file')}, +${diff.additions} −${diff.deletions} against ${base}.`
@@ -218,10 +237,12 @@ async function openCurrent($: EngineInterface, current: Review): Promise<string>
   }
 }
 
-/** Recomputes the Diff of an already open target, after a reload or an Edit. */
+/** Recomputes the Diff of an already open target, after a reload, an Edit or
+ * a revert. The gutter anchor goes too: its row may have moved. */
 async function refresh($: EngineInterface): Promise<void> {
   const current = await read($, review)
   if (current === null || current.info === null) return
+  await update($, anchor, () => null)
   try {
     const ws = createWorkspace(engineRunner($), await $.session.cwd(), toWorkspaceInfo(current.info))
     const diff = await ws.diff()
@@ -263,8 +284,21 @@ export const register: Register = on => {
       description: 'List the refs waiting for the next prompt, or clear them',
       argumentHint: '[clear]',
     })
+    await $.command.register({
+      name: 'revert',
+      description: 'Restore a file Claude edited to its committed version, after a confirmation',
+      argumentHint: '<path>',
+    })
+    // A review kept from before a reload comes back, unless the session now
+    // runs outside its checkout: this build raises no event for a directory
+    // change, so the start is where it shows.
     const current = await read($, review)
-    if (current !== null) {
+    if (current !== null && current.info !== null && !isInside(e.cwd, current.info.dir)) {
+      diffCache.current = null
+      await update($, review, () => null)
+      await update($, basket, () => [])
+      await update($, anchor, () => null)
+    } else if (current !== null) {
       void $.ui.open({ id: PANE, title: 'diff', columns: PANE_COLUMNS })
       void refresh($)
     }
@@ -273,14 +307,20 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'explore' }, async ($, e) => {
-    const [first = '', baseRef] = e.args.trim().split(/\s+/)
-    const target = parseTarget(first)
-    if (!target) {
-      return { text: 'Usage: /explore <number | url | owner/repo#n | branch | .> [base ref]' }
+    const [first = '', typedBase] = e.args.trim().split(/\s+/)
+    let target = parseTarget(first)
+    let baseRef = typedBase ?? null
+    if (first === '') {
+      // No argument: the last target opened in this repository.
+      const remembered = recentFor(recentReviews(await $.store.get(RECENT_KEY)), await $.session.cwd())
+      if (remembered === undefined) return { text: `Nothing to reopen here. ${EXPLORE_USAGE}` }
+      target = remembered.target
+      baseRef = remembered.baseRef
     }
+    if (!target) return { text: EXPLORE_USAGE }
     const opening: Review = {
       target,
-      baseRef: baseRef ?? null,
+      baseRef,
       label: describeTarget(target),
       openedAt: await $.clock.now(),
       phase: 'opening',
@@ -311,6 +351,53 @@ export const register: Register = on => {
     text: await runRefs(e.args, await read($, basket), () => update($, basket, () => []).then(() => undefined)),
   }))
 
+  on('command.run', { command: 'revert' }, async ($, e) => {
+    const current = await read($, review)
+    const info = current?.info ?? null
+
+    return {
+      text: await runRevert(e.args, current?.files ?? null, {
+        confirm: path =>
+          $.ui
+            .ask(`Revert ${path}? Its uncommitted changes are lost; a file not yet committed is deleted.`, ['Revert', 'Keep'])
+            .then(
+              answer => answer === 'Revert',
+              () => false,
+            ),
+        revert: async path => {
+          if (info === null) throw new Error('nothing is open')
+          await createWorkspace(engineRunner($), await $.session.cwd(), toWorkspaceInfo(info)).revert(path)
+          await refresh($)
+        },
+      }),
+    }
+  })
+
+  // After Claude edits a file of the checkout the Diff is recomputed: the
+  // file gets its dirty mark in the pane and a ref whose lines changed its
+  // stale mark. A denied or failed call changed nothing, and a file outside
+  // the checkout cannot change the Diff.
+  on('tool.call', { tool: ['Edit', 'Write', 'NotebookEdit'] }, async ($, e, next) => {
+    const result = await next(e)
+    try {
+      const current = await read($, review)
+      const path = e.tool === 'NotebookEdit' ? e.notebook_path : e.file_path
+      if (
+        current?.info !== null &&
+        current?.info !== undefined &&
+        result.deny === undefined &&
+        result.isError !== true &&
+        isInside(path, current.info.dir)
+      ) {
+        await refresh($)
+      }
+    } catch (err) {
+      $.ui.log(`diff-explorer: refresh after ${e.tool} failed: ${describeError(err)}`)
+    }
+
+    return result
+  })
+
   // The refs ride along as code_ref blocks after the prompt's own words, the
   // Basket's first and then those typed as #path:from-to tokens, and the
   // Basket empties once the prompt has entered. A slash command's line and a
@@ -322,7 +409,7 @@ export const register: Register = on => {
     for (const error of typed.errors) $.ui.toast(error)
     const refs = typed.refs.reduce((all, ref) => basketReducer(all, { type: 'add', ref }), await read($, basket))
     if (refs.length === 0) return next(e)
-    const result = await next({ ...e, text: `${e.text}\n\n${renderRefs(refs)}` })
+    const result = await next({ ...e, text: `${e.text}\n\n${renderRefs(refs, await staleIds($, refs))}` })
     if (result.drop === undefined) await update($, basket, () => [])
 
     return result
@@ -359,6 +446,8 @@ export const register: Register = on => {
       return next(e)
     }
 
-    return renderBand($, e, await read($, basket), bandActions($))
+    const refs = await read($, basket)
+
+    return renderBand($, e, refs, await staleIds($, refs), bandActions($))
   })
 }

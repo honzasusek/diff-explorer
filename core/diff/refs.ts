@@ -34,19 +34,21 @@ export function refName(ref: CodeRef): string {
  *   42 +|     return retry(() => charge(url, opts));
  *   </code_ref>
  */
-export function renderRef(ref: CodeRef, id: string): string {
+export function renderRef(ref: CodeRef, id: string, stale = false): string {
   const width = String(ref.end).length;
   const rows = ref.lines.map((line) => {
     const n = ref.side === "new" ? line.newNo : line.oldNo;
     return `${(n === null ? "" : String(n)).padStart(width)} ${MARKERS[line.type]}| ${line.content}`;
   });
-  const open = `<code_ref id="${id}" file="${ref.file}" side="${ref.side}" lines="${ref.start}-${ref.end}">`;
+  const open = `<code_ref id="${id}" file="${ref.file}" side="${ref.side}" lines="${ref.start}-${ref.end}"${stale ? ' stale="true"' : ""}>`;
   return [open, ...rows, "</code_ref>"].join("\n");
 }
 
-/** The whole Basket as `r1`, `r2`, ... in order, a blank line between blocks. */
-export function renderRefs(refs: readonly CodeRef[]): string {
-  return refs.map((ref, i) => renderRef(ref, `r${i + 1}`)).join("\n\n");
+/** The whole Basket as `r1`, `r2`, ... in order, a blank line between blocks.
+ * A ref whose id is in `stale` opens with `stale="true"`: its lines have
+ * changed since they were captured (core/basket/basketReducer.ts). */
+export function renderRefs(refs: readonly CodeRef[], stale: ReadonlySet<string> = new Set()): string {
+  return refs.map((ref, i) => renderRef(ref, `r${i + 1}`, stale.has(ref.id))).join("\n\n");
 }
 
 /** The files a typed name picks: the exact path; else the paths ending in
