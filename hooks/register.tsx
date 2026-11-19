@@ -5,7 +5,7 @@ import type { Review, ReviewFile, ReviewInfo } from '../types'
 import type { CodeRef, Diff, DiffFile, HunkRow, WorkspaceInfo } from '../core/types.ts'
 import { basketReducer } from '../core/basket/basketReducer.ts'
 import { fileKey, hunkKey } from '../core/diff/layout.ts'
-import { hunkOfRef, refLabel, refsInText, renderRefs } from '../core/diff/refs.ts'
+import { hunkOfRef, refLabel, refsInText, renderRefs, suggestRefs } from '../core/diff/refs.ts'
 import { captureFile, captureHunk, captureRows, gutterPress } from '../core/diff/selection.ts'
 import { describeTarget, parseTarget } from '../core/workspace/target.ts'
 import { createWorkspace } from '../core/workspace/workspace.ts'
@@ -313,6 +313,15 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) =>
     renderPane($, e, await read($, review), await read($, anchor), paneActions($)),
   )
+
+  // Typeahead for a #path:from-to token: the diff's paths, then one file's hunks.
+  on('prompt.autocomplete', { token: /^#/ }, async ($, e, next) => {
+    const diff = await openDiff($)
+    const below = await next(e)
+    if (diff === null) return below
+
+    return { suggestions: [...suggestRefs(diff, e.token).map(text => ({ text })), ...below.suggestions] }
+  })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const current = await read($, review)
