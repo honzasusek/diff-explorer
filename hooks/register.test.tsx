@@ -46,8 +46,7 @@ function gitAnswer(argv: readonly string[], patch = PATCH, status = ''): Answer 
   const ok = (stdout: string): Answer => ({ exitCode: 0, stdout, stderr: '' })
   if (line.includes('rev-parse --show-toplevel')) return ok('/repo\n')
   if (line.includes('rev-parse --verify --quiet origin/HEAD^{commit}')) return ok('abc\n')
-  if (line.includes('merge-base origin/HEAD HEAD')) return ok('base000\n')
-  if (line.includes('merge-base main HEAD')) return ok('base000\n')
+  if (/merge-base \S+ HEAD$/.test(line)) return ok('base000\n')
   if (line.includes('rev-parse HEAD')) return ok('head000\n')
   if (line.includes('diff --no-color --no-ext-diff -M -U3 base000')) return ok(patch)
   if (line.includes('status --porcelain=v1 -z')) return ok(status)
@@ -111,7 +110,7 @@ test('/explore reports a workspace error in the transcript and the pane', async 
 
   await $.session.start({ cwd: '/elsewhere', surface: 'terminal', isInteractive: true })
   const ran = await $.command.run({ ...RUN, command: 'explore', args: '412' })
-  expect(ran.text).toBe('Could not open PR #412: not inside a git repository')
+  expect(ran.text).toBe('Could not open PR #412: not inside a git repository. Start Claude Code inside the repository.')
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await ui.find({ type: 'Text', text: /Error: not inside a git repository/ })).toBeDefined()
@@ -183,21 +182,35 @@ test('a large file starts folded; unfolding draws the hunks near the window and 
 })
 
 /** The repository as git answers for it, changeable between commands; `calls`
- * collects every argv line, `onCall` sees each before it is answered. */
-type Repo = { patch: string; status: string; calls: string[]; onCall?: (line: string) => void }
+ * collects every argv line, `onCall` sees each before it is answered, and
+ * while `fail` is set every git call fails with it as stderr. */
+type Repo = { patch: string; status: string; calls: string[]; onCall?: (line: string) => void; fail?: string }
 
 const sampleRepo = (): Repo => ({ patch: SAMPLE_PATCH, status: '', calls: [] })
 
 /** Opens the sample diff of core/testing/sample.ts. `selected` is what
  * $.ui.selection answers, changeable between commands; `toasts` collects
- * what the mod toasted. */
+ * what the mod toasted and `opened` what it asked $.ui.open for; `against`
+ * is the base the transcript line names. A test that answers the store
+ * itself passes `withStore: false`. */
 async function openSample(
   $: Engine,
   on: On,
-  selected: { text?: string } = {},
-  toasts: string[] = [],
-  repo = sampleRepo(),
-  withStore = true,
+  {
+    selected = {},
+    toasts = [],
+    repo = sampleRepo(),
+    withStore = true,
+    opened = [],
+    against = 'origin/HEAD',
+  }: {
+    selected?: { text?: string }
+    toasts?: string[]
+    repo?: Repo
+    withStore?: boolean
+    opened?: Record<string, unknown>[]
+    against?: string
+  } = {},
 ) {
   mock.clock(on)
   if (withStore) mock.store(on)
@@ -209,26 +222,31 @@ async function openSample(
   })
   on('ui.selection', () => ({ value: selected.text === undefined ? undefined : { text: selected.text } }))
   on('command.register', (_, e) => ({ value: { command: e.name } }))
-  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.open', (_, e) => {
+    opened.push({ ...e })
+
+    return { value: { isPlaced: true } }
+  })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.cwd', () => ({ value: '/repo' }))
   on('process.run', (_, e) => {
     const line = e.argv.join(' ')
     repo.calls.push(line)
     repo.onCall?.(line)
+    if (repo.fail !== undefined) return value({ exitCode: 128, stdout: '', stderr: repo.fail })
 
     return value(gitAnswer(e.argv, repo.patch, repo.status))
   })
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
   const ran = await $.command.run({ ...RUN, command: 'explore', args: '.' })
-  expect(ran.text).toBe('Opened working tree: 4 files, +7 −5 against origin/HEAD.')
+  expect(ran.text).toBe(`Opened working tree: 4 files, +7 −5 against ${against}.`)
 }
 
 const add = ($: Engine) => $.command.run({ ...RUN, command: 'add', args: '' }).then(r => r.text)
 
 test('/add puts the selected lines in the refs once, and explains a miss', async ($, on) => {
   const selected: { text?: string } = { text: '  if (!res.ok && retryable(res)) {\n    return retry(() => charge(url, opts));\n' }
-  await openSample($, on, selected)
+  await openSample($, on, { selected })
   expect(await add($)).toBe('Added client.ts:41-42.')
   expect(await add($)).toBe('client.ts:41-42 is already in the refs.')
   selected.text = '  return res.json();'
@@ -252,7 +270,7 @@ test('/add before /explore says so', async ($, on) => {
 
 test('the pane adds a hunk, a file, and a gutter range on the second press', async ($, on) => {
   const toasts: string[] = []
-  await openSample($, on, {}, toasts)
+  await openSample($, on, { toasts })
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const gutter = async (row: number) => (await ui.find({ key: `line:src-payments-client-ts:0:${row}` }))?.text
 
@@ -322,7 +340,7 @@ test('the band shows the basket as chips; a chip scrolls, [x], [add selection] a
 
     return { value: undefined }
   })
-  await openSample($, on, { text: '  return fn();' }, toasts)
+  await openSample($, on, { selected: { text: '  return fn();' }, toasts })
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await ui.find({ type: 'Text', text: /^refs: none$/ })).toBeDefined()
   expect(await ui.find({ key: 'clear-refs' })).toBeUndefined()
@@ -419,7 +437,7 @@ test('an Edit in the checkout refreshes the diff: a dirty mark on the file, a st
   const repo = sampleRepo()
   on('prompt.submit', (_, e) => ({ text: e.text }))
   on('tool.call', { tool: 'Edit' }, (_, e) => edited(e))
-  await openSample($, on, {}, [], repo)
+  await openSample($, on, { repo })
   await run($, 'ref', 'client.ts:41-42')
   await run($, 'ref', 'retry.ts:1-3')
 
@@ -466,7 +484,7 @@ test('/revert restores a dirty file once the person confirms, and explains every
 
     return { result: { questions: e.questions, answers: { [question]: answer } } }
   })
-  await openSample($, on, {}, [], repo)
+  await openSample($, on, { repo })
   expect(await run($, 'revert')).toBe('Usage: /revert <path>')
   expect(await run($, 'revert', 'nope.ts')).toBe('nope.ts is not in the diff.')
   expect(await run($, 'revert', 'README.md')).toBe('README.md has no uncommitted changes.')
@@ -494,7 +512,7 @@ test('/explore with no argument reopens the last target of this repository, kept
 
     return { value: undefined }
   })
-  await openSample($, on, {}, [], sampleRepo(), false)
+  await openSample($, on, { withStore: false })
   expect(stored.get('recent')).toEqual({ '/repo': { target: { kind: 'worktree' }, baseRef: null, commits: true } })
   expect(await run($, 'explore')).toBe('Opened working tree: 4 files, +7 −5 against origin/HEAD.')
 })
@@ -532,7 +550,7 @@ test('the head row switch turns commits off and on: the section changes and a gi
   })
   on('prompt.compose', () => ({ sections: ENGINE_SECTIONS }))
   on('tool.call', { tool: 'Bash' }, () => ran())
-  await openSample($, on, {}, [], sampleRepo(), false)
+  await openSample($, on, { withStore: false })
   const commit = () => $.tool.call({ tool: 'Bash', command: 'git commit -m x' })
   const section = async () => (await $.prompt.compose(COMPOSE)).sections[1]?.text ?? ''
 
@@ -555,5 +573,41 @@ test('the head row switch turns commits off and on: the section changes and a gi
   expect((await ui.find({ key: 'commits' }))?.text).toBe('auto-commit: off')
   await ui.press({ key: 'commits' })
   expect((await commit()).deny).toBeUndefined()
+  await ui.unmount()
+})
+
+test(
+  'the options set the base ref of a local target, the fold threshold and the inline rows',
+  { options: { baseRef: 'develop', foldLines: 2, inlineRows: 12 } },
+  async ($, on) => {
+    const repo = sampleRepo()
+    const opened: Record<string, unknown>[] = []
+    await openSample($, on, { repo, opened, against: 'develop' })
+    expect(repo.calls.some(line => line.endsWith('merge-base develop HEAD'))).toBe(true)
+    expect(repo.calls.some(line => line.includes('rev-parse --verify'))).toBe(false)
+    expect(opened[0]).toMatchObject({ id: 'explore', title: 'diff', rows: 12 })
+
+    // Over two changed lines a file starts folded: LICENSE, with two, does not.
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect((await ui.find({ type: 'Button', key: 'fold:src-payments-client-ts' }))?.text).toBe('unfold')
+    expect((await ui.find({ type: 'Button', key: 'fold:src-payments-retry-ts' }))?.text).toBe('unfold')
+    expect((await ui.find({ type: 'Button', key: 'fold:LICENSE' }))?.text).toBe('fold')
+    await ui.unmount()
+
+    // A base ref typed after the target wins over the configured one.
+    expect(await run($, 'explore', '. main')).toBe('Opened working tree: 4 files, +7 −5 against main.')
+  },
+)
+
+test('a refresh that fails says so in a toast, with the hint, and in the pane', async ($, on) => {
+  const repo = sampleRepo()
+  const toasts: string[] = []
+  on('tool.call', { tool: 'Edit' }, (_, e) => edited(e))
+  await openSample($, on, { repo, toasts })
+  repo.fail = 'fatal: not a git repository (or any of the parent directories): .git'
+  await $.tool.call({ tool: 'Edit', file_path: '/repo/src/payments/client.ts', old_string: 'a', new_string: 'b' })
+  expect(toasts).toContain('Could not refresh the diff: not inside a git repository. Start Claude Code inside the repository.')
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /^Error: not inside a git repository/ })).toBeDefined()
   await ui.unmount()
 })

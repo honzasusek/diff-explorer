@@ -5,5 +5,25 @@
   "types": "./types/index.d.ts",
   "author": {
     "name": "Honza Sušek"
+  },
+  "userConfig": {
+    "baseRef": {
+      "type": "string",
+      "title": "Default base ref",
+      "description": "What /explore . and /explore <branch> measure the diff from when no base ref is typed after the target. Empty tries origin/HEAD, then main, then master. A pull request is measured from its own base branch.",
+      "default": ""
+    },
+    "foldLines": {
+      "type": "number",
+      "title": "Fold threshold",
+      "description": "Changed lines from which a file starts folded in the pane; 0 folds every file.",
+      "default": 1500
+    },
+    "inlineRows": {
+      "type": "number",
+      "title": "Inline pane rows",
+      "description": "Body rows the pane asks for while it sits above the prompt, in a terminal under 110 columns. 0 leaves it to the layout, a third of the screen. The dock beside a wide transcript ignores it.",
+      "default": 0
+    }
   }
 }

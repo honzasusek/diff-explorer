@@ -64,7 +64,8 @@ export type Anchor = {
 
 export type Review = {
   target: ReviewTarget
-  /** A base ref given on the command line, else the Workspace default. */
+  /** A base ref typed after the target; null takes the configured default
+   * for a local target, else the Workspace's own. */
   baseRef: string | null
   /** How the transcript and the pane name the target, e.g. "PR #412". */
   label: string

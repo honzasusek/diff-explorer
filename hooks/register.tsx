@@ -4,6 +4,8 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { Review, ReviewFile, ReviewInfo } from '../types'
 import type { CodeRef, Diff, DiffFile, HunkRow, WorkspaceInfo } from '../core/types.ts'
 import { basketReducer, markStale } from '../core/basket/basketReducer.ts'
+import { readConfig } from '../core/config.ts'
+import type { Config } from '../core/config.ts'
 import { fileKey, hunkKey } from '../core/diff/layout.ts'
 import { hunkOfRef, promptWithRefs, refLabel, refsInText, suggestRefs } from '../core/diff/refs.ts'
 import { captureFile, captureHunk, captureRows, gutterPress } from '../core/diff/selection.ts'
@@ -12,6 +14,7 @@ import type { ReviewSummary } from '../core/prompt/reviewSection.ts'
 import { isGitCommit } from '../core/workspace/gitCommand.ts'
 import { isInside, recentFor, recentReviews, remember } from '../core/workspace/recent.ts'
 import type { Remembered } from '../core/workspace/recent.ts'
+import { explainError } from '../core/workspace/errors.ts'
 import { describeTarget, parseTarget } from '../core/workspace/target.ts'
 import { createWorkspace } from '../core/workspace/workspace.ts'
 import { renderBand } from './band.tsx'
@@ -33,9 +36,6 @@ const review = atom({ plugin: 'diff-explorer', key: 'review' } as const, null, {
 const basket = atom({ plugin: 'diff-explorer', key: 'basket' } as const, [], { shape: 'basket-1' })
 /** The gutter row of the first press, until the second completes the range. */
 const anchor = atom({ plugin: 'diff-explorer', key: 'anchor' } as const, null, { shape: 'anchor-1' })
-
-/** Changed lines from which a file starts folded in the pane. */
-const FOLD_THRESHOLD = 1500
 
 /** Body columns to ask the dock for; the engine caps a dock at 45% of the terminal. */
 const PANE_COLUMNS = 80
@@ -107,8 +107,9 @@ function toWorkspaceInfo(info: ReviewInfo): WorkspaceInfo {
 }
 
 /** The file list for the state. A fold the person toggled survives a refresh;
- * a file seen for the first time starts folded when it is large. */
-function summarise(diff: Diff, previous: ReviewFile[] | null): ReviewFile[] {
+ * a file seen for the first time starts folded when its changed lines pass
+ * `foldLines`. */
+function summarise(diff: Diff, previous: ReviewFile[] | null, foldLines: number): ReviewFile[] {
   const before = new Map((previous ?? []).map(f => [f.id, f]))
 
   return diff.files.map(f => ({
@@ -119,7 +120,7 @@ function summarise(diff: Diff, previous: ReviewFile[] | null): ReviewFile[] {
     deletions: f.deletions,
     binary: f.binary,
     dirty: f.dirty === true,
-    folded: before.get(f.id)?.folded ?? f.additions + f.deletions > FOLD_THRESHOLD,
+    folded: before.get(f.id)?.folded ?? f.additions + f.deletions > foldLines,
   }))
 }
 
@@ -142,6 +143,27 @@ function summaryOf(current: Review | null): ReviewSummary | null {
 
 function describeError(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
+}
+
+/** Opens or retitles the pane. The rows are for the inline seat above the
+ * prompt; the dock takes its own width from `columns`. */
+function openPane($: EngineInterface, config: Config): Promise<unknown> {
+  return $.ui.open({
+    id: PANE,
+    title: 'diff',
+    columns: PANE_COLUMNS,
+    ...(config.inlineRows === null ? {} : { rows: config.inlineRows }),
+  })
+}
+
+/** Says why a Workspace call failed, in a toast with the hint, and logs the tool's own words. */
+function reportFailure($: EngineInterface, what: string, err: unknown): string {
+  const explained = explainError(err)
+  $.ui.toast(`${what}: ${explained}`, { timeoutMs: 8000 })
+  const detail = err instanceof Error && 'detail' in err && typeof err.detail === 'string' ? err.detail : ''
+  if (detail !== '') $.ui.log(`diff-explorer: ${what}: ${detail}`)
+
+  return explained
 }
 
 /** The Diff of the open review, or null while none is open or loaded. */
@@ -248,19 +270,22 @@ async function toggleCommits($: EngineInterface): Promise<void> {
 }
 
 /** Opens the target the state names and fills in the Diff; the pane redraws as the state changes. */
-async function openCurrent($: EngineInterface, current: Review): Promise<string> {
+async function openCurrent($: EngineInterface, current: Review, config: Config): Promise<string> {
   const sameOpen = (r: Review | null): boolean => r !== null && r.openedAt === current.openedAt
   $.ui.status(`diff-explorer: opening ${current.label}`)
   try {
     const ws = createWorkspace(engineRunner($), await $.session.cwd())
-    const info = await ws.open(current.target, current.baseRef === null ? {} : { baseRef: current.baseRef })
+    // A typed base ref wins, then the configured one for the person's own
+    // tree or branch; a pull request knows its base branch.
+    const baseRef = current.baseRef ?? (current.target.kind === 'pr' ? null : config.baseRef)
+    const info = await ws.open(current.target, baseRef === null ? {} : { baseRef })
     const diff = await ws.diff()
     diffCache.current = { key: info.key, diff }
     const opened: Review = {
       ...current,
       phase: 'open',
       info: toInfo(info),
-      files: summarise(diff, null),
+      files: summarise(diff, null, config.foldLines),
       additions: diff.additions,
       deletions: diff.deletions,
       error: null,
@@ -271,7 +296,7 @@ async function openCurrent($: EngineInterface, current: Review): Promise<string>
 
     return `Opened ${current.label}: ${plural(diff.files.length, 'file')}, +${diff.additions} −${diff.deletions} against ${base}.`
   } catch (err) {
-    const failed: Review = { ...current, phase: 'failed', error: describeError(err) }
+    const failed: Review = { ...current, phase: 'failed', error: explainError(err) }
     await update($, review, r => (sameOpen(r) ? failed : r))
 
     return `Could not open ${current.label}: ${failed.error}`
@@ -281,8 +306,9 @@ async function openCurrent($: EngineInterface, current: Review): Promise<string>
 }
 
 /** Recomputes the Diff of an already open target, after a reload, an Edit or
- * a revert. The gutter anchor goes too: its row may have moved. */
-async function refresh($: EngineInterface): Promise<void> {
+ * a revert. The gutter anchor goes too: its row may have moved. A failure is
+ * toasted: no command answers in the transcript for these. */
+async function refresh($: EngineInterface, config: Config): Promise<void> {
   const current = await read($, review)
   if (current === null || current.info === null) return
   await update($, anchor, () => null)
@@ -293,20 +319,22 @@ async function refresh($: EngineInterface): Promise<void> {
     const refreshed = (r: Review): Review => ({
       ...r,
       phase: 'open',
-      files: summarise(diff, r.files),
+      files: summarise(diff, r.files, config.foldLines),
       additions: diff.additions,
       deletions: diff.deletions,
       error: null,
     })
     await update($, review, r => (r !== null && r.info !== null ? refreshed(r) : r))
   } catch (err) {
-    const message = describeError(err)
+    const message = reportFailure($, 'Could not refresh the diff', err)
     const failed = (r: Review): Review => ({ ...r, phase: 'failed', error: message })
     await update($, review, r => (r !== null ? failed(r) : r))
   }
 }
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  const config = readConfig(options)
+
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'explore',
@@ -342,8 +370,8 @@ export const register: Register = on => {
       await update($, basket, () => [])
       await update($, anchor, () => null)
     } else if (current !== null) {
-      void $.ui.open({ id: PANE, title: 'diff', columns: PANE_COLUMNS })
-      void refresh($)
+      void openPane($, config)
+      void refresh($, config)
     }
 
     return next(e)
@@ -378,9 +406,9 @@ export const register: Register = on => {
     await update($, review, () => opening)
     await update($, basket, () => [])
     await update($, anchor, () => null)
-    await $.ui.open({ id: PANE, title: 'diff', columns: PANE_COLUMNS })
+    await openPane($, config)
 
-    return { text: await openCurrent($, opening) }
+    return { text: await openCurrent($, opening, config) }
   })
 
   on('command.run', { command: 'add' }, async $ => ({
@@ -411,7 +439,7 @@ export const register: Register = on => {
         revert: async path => {
           if (info === null) throw new Error('nothing is open')
           await createWorkspace(engineRunner($), await $.session.cwd(), toWorkspaceInfo(info)).revert(path)
-          await refresh($)
+          await refresh($, config)
         },
       }),
     }
@@ -444,7 +472,7 @@ export const register: Register = on => {
         result.isError !== true &&
         isInside(path, current.info.dir)
       ) {
-        await refresh($)
+        await refresh($, config)
       }
     } catch (err) {
       $.ui.log(`diff-explorer: refresh after ${e.tool} failed: ${describeError(err)}`)

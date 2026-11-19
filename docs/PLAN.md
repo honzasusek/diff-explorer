@@ -193,7 +193,11 @@ What the engine gives for free and the mod must not reimplement: wheel and key s
 /revert path                                      restore a Dirty File, after confirmation
 ```
 
-Names Claude Code already ships (`/pr`, `/diff`, `/review`, `/clear`) are refused at registration, which `claude plugin validate` reports, hence `/explore` and `/refs clear`. `/explore` reports in the transcript ("Checked out feature/retry, 6 files, +184 −37 against main") and update the status line while running. Errors are toasts with the Workspace error name and a hint (`gh auth login`, commit or stash first).
+Names Claude Code already ships (`/pr`, `/diff`, `/review`, `/clear`) are refused at registration, which `claude plugin validate` reports, hence `/explore` and `/refs clear`. `/explore` reports in the transcript ("Checked out feature/retry, 6 files, +184 −37 against main") and updates the status line while running. A Workspace error answers in the transcript with its message and a hint (`core/workspace/errors.ts`: start inside the repository, `gh auth login`, commit or stash first), and the pane's status line shows it; a refresh that fails after an Edit or at a session start, where no command answers, says the same in a toast.
+
+### 4.6a Options
+
+`register(on, options)` receives the manifest's `userConfig` fields with the defaults filled in, and `core/config.ts` reads them once per load into a `Config` the hooks close over; a change in `/config` reloads the module. `baseRef` is what `/explore .` and `/explore <branch>` measure from when nothing is typed after the target (a pull request keeps its own base branch); `foldLines` is the fold threshold; `inlineRows` the body rows the pane asks for while it sits above the prompt (the dock ignores it). A value that cannot be used falls back to its default, so a hook never sees a bad one.
 
 ### 4.7 Surfaces
 

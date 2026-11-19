@@ -4,6 +4,7 @@ import type { CodeRef, Diff } from '../core/types.ts'
 import { locateText } from '../core/diff/locate.ts'
 import { parseRefToken, refLabel, refName } from '../core/diff/refs.ts'
 import { captureRows } from '../core/diff/selection.ts'
+import { explainError } from '../core/workspace/errors.ts'
 
 // The slash commands' words: what each answers in the transcript. The state
 // stays in register.tsx, where the validator reads every update's atom, so a
@@ -80,7 +81,7 @@ export async function runRevert(
   try {
     await ports.revert(path)
   } catch (err) {
-    return `Could not revert ${path}: ${err instanceof Error ? err.message : String(err)}`
+    return `Could not revert ${path}: ${explainError(err)}`
   }
 
   return `Reverted ${path}.`
