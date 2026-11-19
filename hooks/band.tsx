@@ -24,7 +24,7 @@ export function renderBand($: EngineInterface, e: RenderInput<'AbovePrompt'>, ba
     <Box flexDirection="row" flexWrap="wrap" gap={1}>
       <Text dimColor>{basket.length === 0 ? 'refs: none' : 'refs:'}</Text>
       {basket.map(ref => (
-        <Box key={`chip:${ref.id}`} flexDirection="row">
+        <Box key={`chip:${ref.id}`} flexDirection="row" gap={1}>
           <Button key={`ref:${ref.id}`} plain label={refLabel(ref)} onPress={() => actions.show(ref)} />
           <Button key={`drop:${ref.id}`} plain dimColor label="[x]" onPress={() => actions.remove(ref.id)} />
         </Box>
