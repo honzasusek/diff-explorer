@@ -363,6 +363,16 @@ test('the band shows the basket as chips; a chip scrolls, [x], [add selection] a
   await ui.press({ key: 'clear-refs' })
   expect(await ui.find({ type: 'Text', text: /^refs: none$/ })).toBeDefined()
   await ui.unmount()
+
+  // The same band on the desktop surface.
+  const desktop = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect(await desktop.find({ type: 'Text', text: /^refs: none$/ })).toBeDefined()
+  await run($, 'ref', 'client.ts:82')
+  await desktop.redraw()
+  expect((await desktop.find({ key: chip }))?.text).toBe('client.ts:82')
+  await desktop.press({ key: 'drop:src/payments/client.ts:new:82-82' })
+  expect(await desktop.find({ key: chip })).toBeUndefined()
+  await desktop.unmount()
 })
 
 test('a prompt carries the basket and the typed refs as code_ref blocks, then the basket is empty', async ($, on) => {

@@ -1,0 +1,13 @@
+{
+  "name": "diff-explorer",
+  "description": "The diff-explorer mod: a pull request's diff in a pane beside the chat, with line picks that ride along with the prompt.",
+  "owner": {
+    "name": "Honza Sušek"
+  },
+  "plugins": [
+    {
+      "name": "diff-explorer",
+      "source": "./"
+    }
+  ]
+}
