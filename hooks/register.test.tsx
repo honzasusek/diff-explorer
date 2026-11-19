@@ -350,3 +350,30 @@ test('a prompt carries the basket and the typed refs as code_ref blocks, then th
   expect(await run($, 'refs')).toBe('No refs. Select lines in the diff pane and run /add, or /ref path:from-to.')
   expect((await $.prompt.submit({ ...PROMPT, text: 'and now?' })).text).toBe('and now?')
 })
+
+const ENGINE_SECTIONS = [{ id: 'intro', text: 'You are Claude.', scope: 'shared' }] as const
+
+/** A system prompt render as the engine raises it. */
+const COMPOSE = { model: 'claude-opus-5-5', promptModel: 'claude-opus-5-5', surfaces: ['terminal'], tools: [], outputStyle: null, traits: [] } as const
+
+test('the system prompt ends with a review section while a review is open', async ($, on) => {
+  on('prompt.compose', () => ({ sections: ENGINE_SECTIONS }))
+  await openSample($, on)
+  const composed = await $.prompt.compose(COMPOSE)
+  expect(composed.sections.map(s => s.id)).toEqual(['intro', 'diff-explorer:review'])
+  const section = composed.sections[1]
+  expect(section?.scope).toBe('session')
+  expect(section?.text).toContain('The person is reviewing working tree (head000 against origin/HEAD) in the diff-explorer pane')
+  expect(section?.text).toContain('`git diff base000`')
+  expect(section?.text).toContain(
+    'Files in the diff:\n- deleted LICENSE\n- modified README.md\n- modified src/payments/client.ts\n- added src/payments/retry.ts',
+  )
+})
+
+test('the system prompt is left alone while nothing is open', async ($, on) => {
+  on('prompt.compose', () => ({ sections: ENGINE_SECTIONS }))
+  on('command.register', (_, e) => ({ value: { command: e.name } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  expect((await $.prompt.compose(COMPOSE)).sections).toEqual(ENGINE_SECTIONS)
+})

@@ -31,7 +31,7 @@ Source: the type declarations Claude Code 2.1.319 writes when the plugin-authori
 | `command.run` | `command`, `args` (text after the name), `origin`, `presentation` | `{ text, exitCode? }` |
 | `prompt.submit` | `text` (as typed, pastes expanded), `command?`, `isMeta?` | `next({ ...e, text })` to rewrite, `{ drop }` to stop |
 | `prompt.autocomplete` | `text`, `cursor`, `token` (non-whitespace run ending at the cursor), `start`; matcher `{ token: /^#/ }` | `{ suggestions: [{ text }] }`; taking one writes `text` over the token |
-| `prompt.compose` | | `next(e)` gives `{ sections: [{ id, text, scope }] }`; append one with `scope: 'session'` |
+| `prompt.compose` | `model`, `promptModel`, `surfaces`, `tools`, `outputStyle`, `traits` | `next(e)` gives `{ sections: [{ id, text, scope }] }`; append one with `scope: 'session'` and an id `<plugin>:<name>`. Rendered at every request and not cached, so a section whose text changes between turns loses the prompt cache; the kit raises it with the full input (`$.prompt.compose({ model, promptModel, surfaces, tools, outputStyle, traits })`) |
 | `tool.call` | discriminated by `tool`; `tool_use_id`, `agentId` reserved; the tool's own arguments beside | `await next(e)` then act on the result; `{ deny }` to refuse |
 | `ui.press`, `ui.scroll`, `ui.close`, `ui.open` | | normally handled through element closures |
 

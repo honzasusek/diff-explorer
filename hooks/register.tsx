@@ -7,6 +7,8 @@ import { basketReducer } from '../core/basket/basketReducer.ts'
 import { fileKey, hunkKey } from '../core/diff/layout.ts'
 import { hunkOfRef, refLabel, refsInText, renderRefs, suggestRefs } from '../core/diff/refs.ts'
 import { captureFile, captureHunk, captureRows, gutterPress } from '../core/diff/selection.ts'
+import { SECTION_ID, reviewSection } from '../core/prompt/reviewSection.ts'
+import type { ReviewSummary } from '../core/prompt/reviewSection.ts'
 import { describeTarget, parseTarget } from '../core/workspace/target.ts'
 import { createWorkspace } from '../core/workspace/workspace.ts'
 import { renderBand } from './band.tsx'
@@ -76,6 +78,22 @@ function summarise(diff: Diff, previous: ReviewFile[] | null): ReviewFile[] {
     dirty: f.dirty === true,
     folded: before.get(f.id)?.folded ?? f.additions + f.deletions > FOLD_THRESHOLD,
   }))
+}
+
+/** What the system prompt says of an open review; null while none is open. */
+function summaryOf(current: Review | null): ReviewSummary | null {
+  if (current === null || current.phase !== 'open' || current.info === null || current.files === null) return null
+  const info = current.info
+
+  return {
+    label: current.label,
+    title: info.title,
+    head: info.headRefName ?? info.headSha.slice(0, 7),
+    base: info.baseRefName ?? info.baseRef,
+    baseSha: info.baseSha,
+    url: info.url,
+    files: current.files.map(f => ({ path: f.path, status: f.status })),
+  }
 }
 
 function describeError(err: unknown): string {
@@ -308,6 +326,18 @@ export const register: Register = on => {
     if (result.drop === undefined) await update($, basket, () => [])
 
     return result
+  })
+
+  // While a review is open the system prompt ends with a section naming it:
+  // the target, the files and how a code_ref block reads. Its text holds
+  // still across turns (core/prompt/reviewSection.ts), so the prompt cache
+  // survives an Edit.
+  on('prompt.compose', async ($, e, next) => {
+    const below = await next(e)
+    const summary = summaryOf(await read($, review))
+    if (summary === null) return below
+
+    return { sections: [...below.sections, { id: SECTION_ID, text: reviewSection(summary), scope: 'session' }] }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) =>

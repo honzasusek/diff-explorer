@@ -154,7 +154,7 @@ Events, each a one-line hook over a core call:
 | `ui.press` | handled by `onPress` closures | `[+file]`, `[+hunk]`, gutter numbers, chips, `[x]`, `[add selection]` |
 | `prompt.autocomplete` | `token: /^#/` | `suggestRefs` over the current Diff |
 | `prompt.submit` | | appends `renderRefs` of the Basket and of the `#path:from-to` tokens in the text to `e.text`, then clears the Basket once `next` resolves without a drop; a slash command's line and a hidden prompt pass untouched |
-| `prompt.compose` | | appends one `session` section: PR title, `base...head`, the file list with counts, how `code_ref` blocks are formatted, never commit or push |
+| `prompt.compose` | | appends one `session` section (`core/prompt/reviewSection.ts`): the target and title, head against base, the base commit for `git diff`, the file list as paths and statuses, how `code_ref` blocks are formatted, never commit or push. No counts or dirty marks: the engine renders the prompt every turn and a changed section loses the prompt cache, so the text holds still across Edits |
 | `tool.call` | `tool: Edit, Write, MultiEdit, NotebookEdit` | `await next(e)`, then `workspace.diff()`, `markStale`, redraw |
 | `ui.close` | `id: 'explore'` | keeps the review in state so `/explore` reopens it |
 
