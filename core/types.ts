@@ -77,7 +77,27 @@ export interface WorkspaceInfo {
   pr?: PRMeta;
 }
 
-/** A range of diff lines on one Side of one file, captured with its text (ADR-0003). */
+/** A range of line numbers on one Side of one file, before capture: a typed
+ * `#path:41-43`, or a `/ref` argument. */
+export interface LineRange {
+  file: string;
+  side: Side;
+  from: number;
+  to: number;
+}
+
+/** One row of one hunk as the pane draws it, 0 the hunk's first line: what a
+ * gutter press names. */
+export interface HunkRow {
+  file: string;
+  hunk: number;
+  row: number;
+}
+
+/** A range of diff lines on one Side of one file, captured with its text (ADR-0003).
+ * `lines` are the rows as drawn, so a new-Side ref keeps the deleted lines that
+ * sit between its kept ones; `id` is file, Side and range, what the Basket
+ * deduplicates by. */
 export interface CodeRef {
   id: string;
   file: string;
