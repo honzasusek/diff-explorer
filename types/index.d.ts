@@ -69,6 +69,8 @@ export type Review = {
   /** How the transcript and the pane name the target, e.g. "PR #412". */
   label: string
   openedAt: number
+  /** The head row's switch: whether Claude may commit in this checkout. */
+  commits: boolean
   phase: 'opening' | 'open' | 'failed'
   info: ReviewInfo | null
   files: ReviewFile[] | null

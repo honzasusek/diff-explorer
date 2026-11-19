@@ -9,7 +9,9 @@ import { hunkOfRef, promptWithRefs, refLabel, refsInText, suggestRefs } from '..
 import { captureFile, captureHunk, captureRows, gutterPress } from '../core/diff/selection.ts'
 import { SECTION_ID, reviewSection } from '../core/prompt/reviewSection.ts'
 import type { ReviewSummary } from '../core/prompt/reviewSection.ts'
+import { isGitCommit } from '../core/workspace/gitCommand.ts'
 import { isInside, recentFor, recentReviews, remember } from '../core/workspace/recent.ts'
+import type { Remembered } from '../core/workspace/recent.ts'
 import { describeTarget, parseTarget } from '../core/workspace/target.ts'
 import { createWorkspace } from '../core/workspace/workspace.ts'
 import { renderBand } from './band.tsx'
@@ -25,7 +27,7 @@ import { PANE, diffCache } from './state.ts'
 // version stored, and a different tag reads as the initial value instead.
 // The atom stays in this file: the validator reads every update's source here.
 const review = atom({ plugin: 'diff-explorer', key: 'review' } as const, null, {
-  shape: 'review-3',
+  shape: 'review-4',
 })
 /** The Basket: the Code Refs the next prompt carries. */
 const basket = atom({ plugin: 'diff-explorer', key: 'basket' } as const, [], { shape: 'basket-1' })
@@ -42,6 +44,41 @@ const PANE_COLUMNS = 80
 const RECENT_KEY = 'recent'
 
 const EXPLORE_USAGE = 'Usage: /explore <number | url | owner/repo#n | branch | .> [base ref]'
+
+const COMMITS_OFF = 'Commits are off for this review: the "commits" switch in the diff pane turns them on.'
+
+/** The switch's first setting for a target nothing is remembered for: off
+ * for a pull request, whose branch is someone else's, on for the person's
+ * own tree or branch. */
+function defaultCommits(target: Review['target']): boolean {
+  return target.kind !== 'pr'
+}
+
+/** What the store keeps of the open review: the target and the switch. */
+function remembered(current: Review): Remembered {
+  return { target: current.target, baseRef: current.baseRef, commits: current.commits }
+}
+
+/** The record of the repository the session is in, or nothing: a store that
+ * cannot be read must not keep /explore from opening. */
+async function lastReview($: EngineInterface): Promise<Remembered | undefined> {
+  try {
+    return recentFor(recentReviews(await $.store.get(RECENT_KEY)), await $.session.cwd())
+  } catch (err) {
+    $.ui.log(`diff-explorer: could not read the store: ${describeError(err)}`)
+
+    return undefined
+  }
+}
+
+async function rememberReview($: EngineInterface, current: Review, dir: string): Promise<void> {
+  try {
+    const recent = recentReviews(await $.store.get(RECENT_KEY))
+    await $.store.set(RECENT_KEY, remember(recent, dir, remembered(current)))
+  } catch (err) {
+    $.ui.log(`diff-explorer: could not remember ${current.label}: ${describeError(err)}`)
+  }
+}
 
 function toInfo(info: WorkspaceInfo): ReviewInfo {
   return {
@@ -99,6 +136,7 @@ function summaryOf(current: Review | null): ReviewSummary | null {
     baseSha: info.baseSha,
     url: info.url,
     files: current.files.map(f => ({ path: f.path, status: f.status })),
+    commits: current.commits,
   }
 }
 
@@ -194,9 +232,19 @@ function paneActions($: EngineInterface): PaneActions {
           : { ...r, files: r.files.map(f => (f.id === id ? { ...f, folded: !f.folded } : f)) },
       ).catch(log('fold')),
     pressGutter: row => void gutterPressed($, row).catch(log('gutter press')),
+    toggleCommits: () => void toggleCommits($).catch(log('commits switch')),
     addHunk: (file: DiffFile, index: number) => void addCaptured($, captureHunk(file, index)).catch(log('+hunk')),
     addFile: (file: DiffFile) => void addCaptured($, captureFile(file)).catch(log('+file')),
   }
+}
+
+/** Flips the commits switch and remembers it for the repository. */
+async function toggleCommits($: EngineInterface): Promise<void> {
+  const current = await read($, review)
+  if (current === null) return
+  const commits = !current.commits
+  await update($, review, r => (r === null ? r : { ...r, commits }))
+  if (current.info !== null) await rememberReview($, { ...current, commits }, current.info.dir)
 }
 
 /** Opens the target the state names and fills in the Diff; the pane redraws as the state changes. */
@@ -218,12 +266,7 @@ async function openCurrent($: EngineInterface, current: Review): Promise<string>
       error: null,
     }
     await update($, review, r => (sameOpen(r) ? opened : r))
-    try {
-      const recent = recentReviews(await $.store.get(RECENT_KEY))
-      await $.store.set(RECENT_KEY, remember(recent, info.dir, { target: current.target, baseRef: current.baseRef }))
-    } catch (err) {
-      $.ui.log(`diff-explorer: could not remember ${current.label}: ${describeError(err)}`)
-    }
+    await rememberReview($, opened, info.dir)
     const base = info.pr?.baseRefName ?? info.baseRef
 
     return `Opened ${current.label}: ${plural(diff.files.length, 'file')}, +${diff.additions} −${diff.deletions} against ${base}.`
@@ -310,17 +353,18 @@ export const register: Register = on => {
     const [first = '', typedBase] = e.args.trim().split(/\s+/)
     let target = parseTarget(first)
     let baseRef = typedBase ?? null
+    const last = await lastReview($)
     if (first === '') {
       // No argument: the last target opened in this repository.
-      const remembered = recentFor(recentReviews(await $.store.get(RECENT_KEY)), await $.session.cwd())
-      if (remembered === undefined) return { text: `Nothing to reopen here. ${EXPLORE_USAGE}` }
-      target = remembered.target
-      baseRef = remembered.baseRef
+      if (last === undefined) return { text: `Nothing to reopen here. ${EXPLORE_USAGE}` }
+      target = last.target
+      baseRef = last.baseRef
     }
     if (!target) return { text: EXPLORE_USAGE }
     const opening: Review = {
       target,
       baseRef,
+      commits: last?.commits ?? defaultCommits(target),
       label: describeTarget(target),
       openedAt: await $.clock.now(),
       phase: 'opening',
@@ -372,6 +416,17 @@ export const register: Register = on => {
       }),
     }
   })
+
+  // With the switch off, a git commit Claude runs is refused and the model
+  // reads why. The handler keeps the refusal when the hook itself fails.
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    if (isGitCommit(e.command)) {
+      const current = await read($, review)
+      if (current !== null && current.phase === 'open' && !current.commits) return { deny: COMMITS_OFF }
+    }
+
+    return next(e)
+  }).catch(($, e, next) => (next.called ? next(e) : { deny: COMMITS_OFF }))
 
   // After Claude edits a file of the checkout the Diff is recomputed: the
   // file gets its dirty mark in the pane and a ref whose lines changed its

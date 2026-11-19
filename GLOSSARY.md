@@ -81,5 +81,9 @@ _Avoid_: confirmation, approval dialog
 A change Claude made to a file in the Workspace during a Turn. Edits make files Dirty and appear in the Diff.
 _Avoid_: patch, modification, write
 
+**Commits Switch**:
+The control in the pane's head row saying whether Claude may commit in the Workspace during the review. Off, a git commit is refused. Pushing and opening pull requests are never allowed unasked, whatever the switch says.
+_Avoid_: commit mode, permission
+
 **Recent**:
 A previously opened Review Target that can be reopened from the start screen.

@@ -41,6 +41,7 @@ Source: the type declarations Claude Code 2.1.319 writes when the plugin-authori
 - `$.fs.read(path, { as })`, `write`, `list`, `exists`, `stat`; reads are bounded at 4 MiB.
 - `$.session.cwd()` resolves the session's working directory.
 - `$.store.get/set/delete/keys` keep JSON across sessions, 4 MiB in all; `get` answers `unknown`, so a value is checked before use. In the kit `mock.store(on, entries?)` answers it, the test's own `$` has no `store` noun, and one event takes one `on` per test: a test that wants to see the writes answers `store.get` and `store.set` itself instead of calling `mock.store`.
+- A guard is registered as `on('tool.call', { tool: 'Bash' }, hook).catch(($, e, next) => (next.called ? next(e) : { deny }))`, so a hook that fails still refuses. In the kit, a plugin's `{ deny }` comes back as `deny` on the result of the test's `$.tool.call`, and a press on a mounted drawing redraws it, so a `find` right after reads the new label.
 - `$.ui.ask(question, options)` opens the engine's AskUserQuestion dialog and resolves to the label chosen; it rejects when dismissed. It is a `tool.call` of `AskUserQuestion`, so a test answers it with a hook on `{ tool: 'AskUserQuestion' }` returning `{ result: { questions: e.questions, answers: { [question]: label } } }`.
 
 ## Limits the plan designs around

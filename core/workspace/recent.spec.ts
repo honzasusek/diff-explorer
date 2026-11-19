@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { isInside, recentFor, recentReviews, remember } from "./recent.ts";
 
 const pay = { target: { kind: "pr" as const, number: 412 }, baseRef: null };
-const web = { target: { kind: "worktree" as const }, baseRef: "main" };
+const web = { target: { kind: "worktree" as const }, baseRef: "main", commits: false };
 
 test("isInside takes the directory itself and what lies under it, not a sibling with the same prefix", () => {
   assert.equal(isInside("/a", "/a"), true);
@@ -26,6 +26,8 @@ test("recentFor picks the record of the repository holding the directory, the de
 test("recentReviews reads back only well-formed entries", () => {
   const stored = JSON.parse(JSON.stringify({ "/work/pay": pay, "/bad": { target: { kind: "pr" } }, "/worse": 3 }));
   assert.deepEqual(recentReviews(stored), { "/work/pay": pay });
+  assert.deepEqual(recentReviews({ "/w": { ...web, commits: "yes" } }), { "/w": { target: web.target, baseRef: "main" } });
+  assert.deepEqual(recentReviews({ "/w": web }), { "/w": web });
   assert.deepEqual(recentReviews(undefined), {});
   assert.deepEqual(recentReviews([pay]), {});
 });

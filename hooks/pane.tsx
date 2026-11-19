@@ -7,7 +7,8 @@ import { hunksNear, layoutDiff } from '../core/diff/layout.ts'
 import { renderHunk, renderHunkHeader } from '../core/diff/patchRenderer.ts'
 import { diffCache } from './state.ts'
 
-// The diff pane. Top to bottom: a head line, a status line, then every file's
+// The diff pane. Top to bottom: a head line with the commits switch (whether
+// Claude may commit in this checkout), a status line, then every file's
 // header row and its hunks, each hunk a diff Code under a header row, with a
 // column of line-number buttons beside the Code: the gutter, where two
 // presses pick a range. Only the hunks near the scroll window are drawn; the
@@ -26,6 +27,8 @@ export interface PaneActions {
   pressGutter(row: HunkRow): void
   addHunk(file: DiffFile, hunkIndex: number): void
   addFile(file: DiffFile): void
+  /** The head row's switch: whether Claude may commit in this checkout. */
+  toggleCommits(): void
 }
 
 /** Rows above the first file: the head line and the status line. */
@@ -197,9 +200,19 @@ export function renderPane(
 
   return (
     <Box flexDirection="column">
-      <Text bold wrap="truncate-end">
-        {head}
-      </Text>
+      <Box flexDirection="row" gap={1}>
+        <Box flexGrow={1} flexShrink={1}>
+          <Text bold wrap="truncate-end">
+            {head}
+          </Text>
+        </Box>
+        <Button
+          key="commits"
+          plain
+          label={`commits: ${current.commits ? 'on' : 'off'}`}
+          onPress={() => actions.toggleCommits()}
+        />
+      </Box>
       <Text dimColor wrap="truncate-end">
         {statusLine(current)}
       </Text>

@@ -495,7 +495,7 @@ test('/explore with no argument reopens the last target of this repository, kept
     return { value: undefined }
   })
   await openSample($, on, {}, [], sampleRepo(), false)
-  expect(stored.get('recent')).toEqual({ '/repo': { target: { kind: 'worktree' }, baseRef: null } })
+  expect(stored.get('recent')).toEqual({ '/repo': { target: { kind: 'worktree' }, baseRef: null, commits: true } })
   expect(await run($, 'explore')).toBe('Opened working tree: 4 files, +7 −5 against origin/HEAD.')
 })
 
@@ -517,4 +517,43 @@ test('a session that starts outside the checkout drops the review it kept', asyn
   expect(await ui.find({ type: 'Text', text: /^Nothing open/ })).toBeDefined()
   await ui.unmount()
   expect(await run($, 'refs')).toBe('No refs. Select lines in the diff pane and run /add, or /ref path:from-to.')
+})
+
+/** A Bash run as the kit's bottom answers one the test raises. */
+const ran = () => ({ result: { stdout: '', stderr: '', interrupted: false } })
+
+test('the head row switch turns commits off and on: the section changes and a git commit is refused while off', async ($, on) => {
+  const stored = new Map<string, unknown>()
+  on('store.get', (_, e) => ({ value: stored.get(e.key) }))
+  on('store.set', (_, e) => {
+    stored.set(e.key, e.value)
+
+    return { value: undefined }
+  })
+  on('prompt.compose', () => ({ sections: ENGINE_SECTIONS }))
+  on('tool.call', { tool: 'Bash' }, () => ran())
+  await openSample($, on, {}, [], sampleRepo(), false)
+  const commit = () => $.tool.call({ tool: 'Bash', command: 'git commit -m x' })
+  const section = async () => (await $.prompt.compose(COMPOSE)).sections[1]?.text ?? ''
+
+  // The person's own tree starts with commits on.
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await ui.find({ key: 'commits' }))?.text).toBe('commits: on')
+  expect(await section()).toContain('Commits in it are allowed')
+  expect((await commit()).deny).toBeUndefined()
+
+  await ui.press({ key: 'commits' })
+  expect((await ui.find({ key: 'commits' }))?.text).toBe('commits: off')
+  expect(await section()).toContain('Do not commit in it: commits are switched off in the diff pane')
+  expect((await commit()).deny).toBe('Commits are off for this review: the "commits" switch in the diff pane turns them on.')
+  expect((await $.tool.call({ tool: 'Bash', command: 'git status' })).deny).toBeUndefined()
+  expect(stored.get('recent')).toEqual({ '/repo': { target: { kind: 'worktree' }, baseRef: null, commits: false } })
+
+  // The setting comes back with the repository.
+  expect(await run($, 'explore', '.')).toBe('Opened working tree: 4 files, +7 −5 against origin/HEAD.')
+  await ui.redraw()
+  expect((await ui.find({ key: 'commits' }))?.text).toBe('commits: off')
+  await ui.press({ key: 'commits' })
+  expect((await commit()).deny).toBeUndefined()
+  await ui.unmount()
 })

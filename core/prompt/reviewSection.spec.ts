@@ -15,6 +15,7 @@ const review: ReviewSummary = {
     { path: "src/payments/client.ts", status: "modified" },
     { path: "src/payments/retry.ts", status: "added" },
   ],
+  commits: false,
 };
 
 test("the section names the review, the base commit, the files and the code_ref format", () => {
@@ -29,7 +30,8 @@ test("the section names the review, the base commit, the files and the code_ref 
   assert.ok(text.includes("<code_ref> blocks"));
   assert.ok(text.includes('stale="true"'));
   assert.ok(text.includes("apply it there unless the request itself names a wider scope."));
-  assert.ok(text.endsWith("do not commit, push or open a pull request in it unless they ask."));
+  assert.ok(text.endsWith("Do not commit in it: commits are switched off in the diff pane, and a git commit is refused. Do not push or open a pull request unless they ask."));
+  assert.ok(reviewSection({ ...review, commits: true }).endsWith("Commits in it are allowed, by the switch in the diff pane; do not push or open a pull request unless they ask."));
 });
 
 test("a local target has no title or page; many files end in a count", () => {

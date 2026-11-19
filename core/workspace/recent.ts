@@ -9,6 +9,8 @@ export interface Remembered {
   target: Target;
   /** The base ref given on the command line, else null for the default. */
   baseRef: string | null;
+  /** The pane's commits switch as last set; absent from an older record. */
+  commits?: boolean;
 }
 
 export type RecentReviews = Record<string, Remembered>;
@@ -31,8 +33,9 @@ export function recentReviews(stored: unknown): RecentReviews {
   if (typeof stored !== "object" || stored === null || Array.isArray(stored)) return out;
   for (const [dir, entry] of Object.entries(stored)) {
     if (typeof entry !== "object" || entry === null) continue;
-    const e = entry as { target?: unknown; baseRef?: unknown };
-    if (isTarget(e.target) && (e.baseRef === null || typeof e.baseRef === "string")) out[dir] = { target: e.target, baseRef: e.baseRef };
+    const e = entry as { target?: unknown; baseRef?: unknown; commits?: unknown };
+    if (!isTarget(e.target) || (e.baseRef !== null && typeof e.baseRef !== "string")) continue;
+    out[dir] = { target: e.target, baseRef: e.baseRef, ...(typeof e.commits === "boolean" ? { commits: e.commits } : {}) };
   }
   return out;
 }

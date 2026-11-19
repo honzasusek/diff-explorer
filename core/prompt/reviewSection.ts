@@ -26,6 +26,8 @@ export interface ReviewSummary {
   baseSha: string;
   url: string | null;
   files: readonly { path: string; status: FileStatus }[];
+  /** The pane's switch: whether Claude may commit in this checkout. */
+  commits: boolean;
 }
 
 /** Files named one per line; past this many the rest is a count. */
@@ -52,6 +54,8 @@ export function reviewSection(review: ReviewSummary): string {
     `The diff is measured from commit ${review.baseSha}: \`git diff ${review.baseSha}\` shows it as it stands now, your own edits included.`,
     review.files.length === 0 ? "The diff holds no files." : ["Files in the diff:", ...shown].join("\n"),
     CODE_REF_HELP,
-    "This checkout is the person's review: do not commit, push or open a pull request in it unless they ask.",
+    review.commits
+      ? "This checkout is the person's review. Commits in it are allowed, by the switch in the diff pane; do not push or open a pull request unless they ask."
+      : "This checkout is the person's review. Do not commit in it: commits are switched off in the diff pane, and a git commit is refused. Do not push or open a pull request unless they ask.",
   ].join("\n\n");
 }
