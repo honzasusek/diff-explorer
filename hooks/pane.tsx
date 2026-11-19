@@ -7,8 +7,9 @@ import { hunksNear, layoutDiff } from '../core/diff/layout.ts'
 import { renderHunk, renderHunkHeader } from '../core/diff/patchRenderer.ts'
 import { diffCache } from './state.ts'
 
-// The diff pane. Top to bottom: a head line with the commits switch (whether
-// Claude may commit in this checkout), a status line, then every file's
+// The diff pane. Top to bottom: a head line with the auto-commit switch
+// (whether Claude may commit in this checkout), a status line, then every
+// file's
 // header row and its hunks, each hunk a diff Code under a header row, with a
 // column of line-number buttons beside the Code: the gutter, where two
 // presses pick a range. Only the hunks near the scroll window are drawn; the
@@ -209,7 +210,7 @@ export function renderPane(
         <Button
           key="commits"
           plain
-          label={`commits: ${current.commits ? 'on' : 'off'}`}
+          label={`auto-commit: ${current.commits ? 'on' : 'off'}`}
           onPress={() => actions.toggleCommits()}
         />
       </Box>

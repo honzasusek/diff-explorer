@@ -55,7 +55,7 @@ export function reviewSection(review: ReviewSummary): string {
     review.files.length === 0 ? "The diff holds no files." : ["Files in the diff:", ...shown].join("\n"),
     CODE_REF_HELP,
     review.commits
-      ? "This checkout is the person's review. Commits in it are allowed, by the switch in the diff pane; do not push or open a pull request unless they ask."
-      : "This checkout is the person's review. Do not commit in it: commits are switched off in the diff pane, and a git commit is refused. Do not push or open a pull request unless they ask.",
+      ? "This checkout is the person's review. Commits in it are allowed, by the auto-commit switch in the diff pane; do not push or open a pull request unless they ask."
+      : "This checkout is the person's review. Do not commit in it: the auto-commit switch in the diff pane is off, and a git commit is refused. Do not push or open a pull request unless they ask.",
   ].join("\n\n");
 }

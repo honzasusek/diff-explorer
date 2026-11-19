@@ -45,7 +45,7 @@ const RECENT_KEY = 'recent'
 
 const EXPLORE_USAGE = 'Usage: /explore <number | url | owner/repo#n | branch | .> [base ref]'
 
-const COMMITS_OFF = 'Commits are off for this review: the "commits" switch in the diff pane turns them on.'
+const COMMITS_OFF = 'Commits are off for this review: the "auto-commit" switch in the diff pane turns them on.'
 
 /** The switch's first setting for a target nothing is remembered for: off
  * for a pull request, whose branch is someone else's, on for the person's

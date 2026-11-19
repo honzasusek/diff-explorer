@@ -538,21 +538,21 @@ test('the head row switch turns commits off and on: the section changes and a gi
 
   // The person's own tree starts with commits on.
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect((await ui.find({ key: 'commits' }))?.text).toBe('commits: on')
+  expect((await ui.find({ key: 'commits' }))?.text).toBe('auto-commit: on')
   expect(await section()).toContain('Commits in it are allowed')
   expect((await commit()).deny).toBeUndefined()
 
   await ui.press({ key: 'commits' })
-  expect((await ui.find({ key: 'commits' }))?.text).toBe('commits: off')
-  expect(await section()).toContain('Do not commit in it: commits are switched off in the diff pane')
-  expect((await commit()).deny).toBe('Commits are off for this review: the "commits" switch in the diff pane turns them on.')
+  expect((await ui.find({ key: 'commits' }))?.text).toBe('auto-commit: off')
+  expect(await section()).toContain('Do not commit in it: the auto-commit switch in the diff pane is off')
+  expect((await commit()).deny).toBe('Commits are off for this review: the "auto-commit" switch in the diff pane turns them on.')
   expect((await $.tool.call({ tool: 'Bash', command: 'git status' })).deny).toBeUndefined()
   expect(stored.get('recent')).toEqual({ '/repo': { target: { kind: 'worktree' }, baseRef: null, commits: false } })
 
   // The setting comes back with the repository.
   expect(await run($, 'explore', '.')).toBe('Opened working tree: 4 files, +7 −5 against origin/HEAD.')
   await ui.redraw()
-  expect((await ui.find({ key: 'commits' }))?.text).toBe('commits: off')
+  expect((await ui.find({ key: 'commits' }))?.text).toBe('auto-commit: off')
   await ui.press({ key: 'commits' })
   expect((await commit()).deny).toBeUndefined()
   await ui.unmount()
