@@ -32,6 +32,15 @@ test("a row the pane cut with … matches as a prefix of its line", () => {
   assert.equal(locateText(diff, "  if (!res.ok && retryable(res)) {\n    return fn(…\n  return res.json();").kind, "notFound");
 });
 
+test("a line the pane wrapped comes back in pieces and still finds its rows", () => {
+  // "    return retry(() => charge(url, opts));" wrapped after "=>", and
+  // the space at the break lost to the row's trimmed end.
+  assert.deepEqual(where(locateText(diff, "retryable(res)) {\n    return retry(() =>\ncharge(url, opts));")), [CLIENT, 0, 2, 3]);
+  assert.deepEqual(where(locateText(diff, "export function retry<T>(fn: () => Pr\nomise<T>): Promise<T> {")), ["src/payments/retry.ts", 0, 0, 0]);
+  assert.deepEqual(where(locateText(diff, "const res = await fet\nch(url, opts);\n  if (!res.ok) th")), [CLIENT, 0, 0, 1]);
+  assert.equal(locateText(diff, "retry(() =>\ncharge(url, nope));").kind, "notFound");
+});
+
 test("a line found in two files is ambiguous unless the hint settles it", () => {
   const text = "  return res.json();";
   assert.deepEqual(where(locateText(diff, text)), [[CLIENT, 0, 4, 4], ["README.md", 0, 1, 1]]);

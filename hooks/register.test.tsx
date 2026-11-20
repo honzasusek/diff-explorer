@@ -80,7 +80,7 @@ test('/explore . opens the working tree and the pane shows its files', async ($,
     expect(await ui.find({ type: 'Text', text: /^M src\/client\.ts\s+\+2 −1$/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /^@@ -40,3 \+40,4 @@/ })).toBeDefined()
     const code = await ui.find({ type: 'Code' })
-    expect(code?.props).toMatchObject({ format: 'diff', path: 'src/client.ts', wrap: 'truncate-end' })
+    expect(code?.props).toMatchObject({ format: 'diff', path: 'src/client.ts', wrap: 'wrap' })
     expect(String(code?.props.source).startsWith('@@ -40,3 +40,4 @@ export async function charge(\n')).toBe(true)
     await ui.unmount()
   }
@@ -643,4 +643,26 @@ test('a patch the engine cuts at its cap is fetched per file; a file still cut s
   expect(await ui.findAll({ type: 'Code' })).toHaveLength(0)
   expect(await ui.find({ key: 'fold:src-client-ts' })).toBeUndefined()
   await ui.unmount()
+})
+
+test('a narrow pane wraps long lines: each gutter button is as tall as its line, headers break into rows', async ($, on) => {
+  await openSample($, on)
+  // 30 columns: the client.ts hunk's numbers have 2 digits, so its gutter is
+  // 3 cells, the engine's prefix 5 and the code 22.
+  const narrow = { ...PANE.props, bodyColumns: 30 }
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ ...PANE, surface, props: narrow })
+    expect((await ui.find({ type: 'Code' }))?.props.wrap).toBe('wrap')
+    // '    return retry(() => charge(url, opts));' is 42 cells: two rows.
+    const height = async (row: number) => (await ui.find({ key: `gutter:src-payments-client-ts:0:${row}` }))?.props.height
+    expect(await height(0)).toBe(2)
+    expect(await height(3)).toBe(2)
+    expect(await height(4)).toBe(1)
+    // The head row breaks beside the switch, the file header beside its buttons.
+    expect(await ui.find({ type: 'Text', text: /^working tree ·$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^head000 →$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^src\/payments\/client$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^\.ts {2}\+3 −1$/ })).toBeDefined()
+    await ui.unmount()
+  }
 })

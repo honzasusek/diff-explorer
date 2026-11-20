@@ -9,6 +9,13 @@
 // the selection carries the cut row as shown: the text up to the cut and the
 // `…`, nothing after. Such a row matches as a prefix of its line.
 //
+// A line the Code wraps comes back as one row per screen row, split wherever
+// the wrap fell (research note, "Wrapping in the pane"). When no run of whole
+// rows matches, the selection is matched again with its row breaks and every
+// blank dropped, against each hunk's lines joined the same way: the rows
+// "the CommonJS build i" and "s removed." find the line that holds
+// "the CommonJS build is removed.".
+//
 // Sample: "retryable(res)) {" through "    return retry(() => charge" in
 // client.ts lands on rows 2 to 3 of its first hunk, and so does
 // "retryable(res)…" through "    return retry(() => charge".
@@ -48,7 +55,7 @@ export function locateText(diff: Diff, text: string, hint?: { file: string }): L
     if (i === n - 1 || cut) return line.startsWith(row);
     return line === row;
   };
-  const candidates: LocatedRows[] = [];
+  let candidates: LocatedRows[] = [];
   for (const file of diff.files) {
     file.hunks.forEach((hunk, hunkIndex) => {
       for (let at = 0; at + n <= hunk.lines.length; at++) {
@@ -58,10 +65,47 @@ export function locateText(diff: Diff, text: string, hint?: { file: string }): L
       }
     });
   }
+  if (candidates.length === 0 && n > 1) candidates = locateJoined(diff, rows.join(""));
   const hinted = hint === undefined ? [] : candidates.filter((c) => c.file.path === hint.file);
   const picked = hinted.length === 1 ? hinted : candidates;
   const [first] = picked;
   if (first === undefined) return { kind: "notFound" };
   if (picked.length === 1) return { kind: "located", at: first };
   return { kind: "ambiguous", candidates: picked };
+}
+
+const BLANK = /\s/;
+
+/** The places a selection sits once row breaks and blanks no longer count:
+ * each hunk's lines are joined without their blanks, each kept character
+ * remembering its line, and every occurrence of the selection's characters
+ * gives the lines it runs from and to. */
+function locateJoined(diff: Diff, text: string): LocatedRows[] {
+  const needle = text.replace(/\s+/g, "");
+  if (needle === "") return [];
+  const found: LocatedRows[] = [];
+  for (const file of diff.files) {
+    file.hunks.forEach((hunk, hunkIndex) => {
+      const chars: string[] = [];
+      const lineOf: number[] = [];
+      hunk.lines.forEach((line, index) => {
+        for (const ch of line.content) {
+          if (BLANK.test(ch)) continue;
+          chars.push(ch);
+          // One entry per UTF-16 unit, the unit indexOf counts in.
+          for (let unit = 0; unit < ch.length; unit++) lineOf.push(index);
+        }
+      });
+      const joined = chars.join("");
+      const seen = new Set<string>();
+      for (let at = joined.indexOf(needle); at !== -1; at = joined.indexOf(needle, at + 1)) {
+        const from = lineOf[at] ?? 0;
+        const to = lineOf[at + needle.length - 1] ?? from;
+        if (seen.has(`${from}:${to}`)) continue;
+        seen.add(`${from}:${to}`);
+        found.push({ file, hunk: hunkIndex, from, to });
+      }
+    });
+  }
+  return found;
 }

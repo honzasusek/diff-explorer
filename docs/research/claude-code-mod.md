@@ -65,6 +65,19 @@ Measured on Claude Code 2.1.327 with a throwaway mod that drew the hunks of hono
 5. **Scroll-to-key works on a placeholder.** `$.ui.scroll({ in, to: { key }, block: 'start' })` resolved `{}` and moved the window to a keyed `Box` that stood in for an undrawn hunk; the drawing that followed put the real hunk on the same rows. This holds only while the tree's row count is exact: every header `Text` is `wrap: 'truncate-end'` (one row), and a placeholder `Box` has `height` equal to the rows it replaces. With that, `contentRows` equalled the mod's own count (3,264) at every scroll.
 6. **Where the pane sits.** In a fullscreen terminal: 100 columns → `inline` above the prompt, `bodyColumns` 96, `bodyRows` 11 of 40 (a third, less the frame); 130 columns → `dock`, `bodyColumns` 57, the transcript 72 wide, `bodyRows` 33 of 40; 160 columns → `dock`, `bodyColumns` 71, the transcript 88, `bodyRows` 38 of 45. A `columns` request on `$.ui.open` is capped at 45% of the terminal, so asking for more than that gives the cap. `e.viewport.columns` is the transcript's width, not the terminal's; `presentation.columns` on `command.run` is the terminal's.
 
+## Wrapping in the pane (2026-11-20)
+
+Measured on Claude Code 2.1.329 with a throwaway mod at 71 body columns. A `Code` with `format: 'diff'` and `wrap: 'wrap'`:
+
+- Each row opens with a prefix of `digits + 3` cells: a space, the line number right-aligned to the widest number the hunk shows, a space, the marker. A continuation row leaves the number blank and repeats the marker.
+- The code wraps by character into the rest of the width, not by word. A line that fits exactly stays on one row. A wide character (CJK) takes two cells and moves whole to the next row when it does not fit.
+- A tab in the line's leading run draws two cells; a later tab runs to the next multiple of eight.
+- A plain `Button` takes exactly its label's width; `gap={1}` adds one cell before it.
+- `Text` with `wrap: 'wrap'` wraps by word instead, which the pane does not rely on: it breaks headers itself and draws one Text per row.
+- A drag across a wrapped line gives one selection row per screen row, split where the wrap fell, markers left out: the rows are not joined back into the line. `locateText` matches such a selection with row breaks and blanks dropped.
+
+`core/diff/wrap.ts` holds the rules. On the 11,565-row hono diff every gutter number sat on the row of the engine's own number at seven scroll positions, with up to 38 wrapped rows in view. Counting rows for every line costs 35 ms, so the pane keeps the counts per hunk until the width changes; a wheel tick then redraws in 23 ms median, as before wrapping.
+
 ## Large-diff pass (2026-11-19)
 
 Measured on Claude Code 2.1.327 with the finished pane, in the hono clone, the working tree against the merge-base with `origin/main`: 122 files, 258 hunks, 13,326 diff lines, 11,565 pane rows, a 481 KB patch. Driven in a pseudo-terminal at 160 columns (the pane docked at 71 body columns, 38 body rows), a wheel tick or a PageDown measured from the key to the first change of the pane's text.
