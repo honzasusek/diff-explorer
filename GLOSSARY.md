@@ -85,5 +85,9 @@ _Avoid_: patch, modification, write
 The control in the pane's head row, `auto-commit: on` or `off`, saying whether Claude may commit in the Workspace during the review. Off, a git commit is refused. Pushing and opening pull requests are never allowed unasked, whatever the switch says.
 _Avoid_: commit mode, permission
 
+**Side-by-side View**:
+The way the pane draws a Diff when its `side-by-side` switch is on: the old file on the left, the new on the right, each change level with what it replaced. Off, the pane draws one column, deleted and added lines in turn. The choice belongs to the person, not the Review.
+_Avoid_: split view, two-column mode
+
 **Recent**:
 A previously opened Review Target that can be reopened from the start screen.

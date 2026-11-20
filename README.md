@@ -9,6 +9,7 @@ A Claude Code mod that opens a pull request's or a branch's diff in a pane besid
 - Each pick is a chip above the prompt. Send a prompt and the chips go with it as `code_ref` blocks, numbered and marked as in the pane, after a lead-in saying they are the lines the request is about. While a review is open, Claude's system prompt names it: the target, its files, the base commit to run `git diff` against.
 - When Claude edits a file of the checkout the pane refreshes: the file gets a dirty dot, and a chip whose lines changed reads `(stale)`. `/revert <path>` restores a file to its committed version after a confirmation.
 - The pane's head row has an `auto-commit` switch. Off, a `git commit` Claude runs is refused with the reason. It starts off for a pull request, whose branch is someone else's, and on for your own tree or branch, and is remembered per repository. Pushing and opening pull requests are never allowed unasked, whatever the switch says.
+- Beside it, `side-by-side` draws each hunk with the old file on the left and the new on the right, every change level with what it replaced. The choice is remembered for every repository and session.
 
 Everything the mod knows lives in `core/`, plain TypeScript with no dependency on the engine, Node or a UI; `hooks/` wires it to Claude Code's events and draws the pane.
 

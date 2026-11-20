@@ -6,10 +6,12 @@
 // 4 and 5).
 //
 // Rows, top to bottom: `headRows` fixed rows, then per file its header and,
-// unless the file is folded or binary, per hunk its header plus every line.
+// unless the file is folded or binary, per hunk its header plus its body.
 // The engine draws no `@@` row of its own for a diff Code, so the hunk header
-// is the pane's. How many rows each of those takes is the RowMeasure's word:
-// one each by default, more where the pane wraps long text (core/diff/wrap.ts).
+// is the pane's. The body is drawn in pieces: one per line in the unified
+// view, one per block in the side-by-side view (core/diff/split.ts). How many
+// rows each of those takes is the RowMeasure's word: one per line by default,
+// more where the pane wraps long text (core/diff/wrap.ts).
 //
 // For a Diff of two files, A with hunks of 3 and 5 lines and B binary, with
 // two head rows and one row each: A's header at row 2, its hunks at rows 3
@@ -26,8 +28,9 @@ export interface HunkSlot {
   rows: number;
   /** Rows of the hunk's header. */
   headerRows: number;
-  /** Rows of each line, in order: the gutter button beside a line is this tall. */
-  lineRows: number[];
+  /** Rows of each piece of the body, in order: a line, or a block of the
+   * side-by-side view. The gutter button beside a line is as tall as its piece. */
+  bodyRows: number[];
 }
 
 export interface FileSlot {
@@ -44,11 +47,12 @@ export interface FileSlot {
 export interface RowMeasure {
   fileHeader(file: DiffFile, folded: boolean): number;
   hunkHeader(file: DiffFile, hunk: Hunk): number;
-  line(hunk: Hunk, index: number): number;
+  /** Rows of each piece of the hunk's body, as the pane draws it. */
+  body(hunk: Hunk): number[];
 }
 
 /** Every part on one row: text cut at the edge, nothing wrapped. */
-export const ONE_ROW: RowMeasure = { fileHeader: () => 1, hunkHeader: () => 1, line: () => 1 };
+export const ONE_ROW: RowMeasure = { fileHeader: () => 1, hunkHeader: () => 1, body: (hunk) => hunk.lines.map(() => 1) };
 
 export interface Layout {
   files: FileSlot[];
@@ -80,9 +84,9 @@ export function layoutDiff(diff: Diff, folded: ReadonlySet<string>, headRows: nu
     if (!isFolded) {
       file.hunks.forEach((hunk, index) => {
         const headerRows = Math.max(1, measure.hunkHeader(file, hunk));
-        const lineRows = hunk.lines.map((_, i) => Math.max(1, measure.line(hunk, i)));
-        const rows = headerRows + lineRows.reduce((sum, n) => sum + n, 0);
-        hunks.push({ key: hunkKey(file.id, index), file, hunk, index, top, rows, headerRows, lineRows });
+        const bodyRows = measure.body(hunk).map((n) => Math.max(1, n));
+        const rows = headerRows + bodyRows.reduce((sum, n) => sum + n, 0);
+        hunks.push({ key: hunkKey(file.id, index), file, hunk, index, top, rows, headerRows, bodyRows });
         top += rows;
       });
     }

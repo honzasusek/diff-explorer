@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Review, ReviewFile, ReviewInfo } from '../types'
+import type { DiffView, Review, ReviewFile, ReviewInfo } from '../types'
 import type { CodeRef, Diff, DiffFile, HunkRow, WorkspaceInfo } from '../core/types.ts'
 import { basketReducer, markStale } from '../core/basket/basketReducer.ts'
 import { readConfig } from '../core/config.ts'
@@ -36,12 +36,17 @@ const review = atom({ plugin: 'diff-explorer', key: 'review' } as const, null, {
 const basket = atom({ plugin: 'diff-explorer', key: 'basket' } as const, [], { shape: 'basket-1' })
 /** The gutter row of the first press, until the second completes the range. */
 const anchor = atom({ plugin: 'diff-explorer', key: 'anchor' } as const, null, { shape: 'anchor-1' })
+/** How the pane draws hunks: one column, or the old side beside the new. */
+const view = atom({ plugin: 'diff-explorer', key: 'view' } as const, 'unified', { shape: 'view-1' })
 
 /** Body columns to ask the dock for; the engine caps a dock at 45% of the terminal. */
 const PANE_COLUMNS = 80
 
 /** The store key of the last target per repository (core/workspace/recent.ts). */
 const RECENT_KEY = 'recent'
+
+/** The store key of the pane's view: a habit of the person's, the same in every repository. */
+const VIEW_KEY = 'view'
 
 const EXPLORE_USAGE = 'Usage: /explore <number | url | owner/repo#n | branch | .> [base ref]'
 
@@ -255,6 +260,7 @@ function paneActions($: EngineInterface): PaneActions {
       ).catch(log('fold')),
     pressGutter: row => void gutterPressed($, row).catch(log('gutter press')),
     toggleCommits: () => void toggleCommits($).catch(log('commits switch')),
+    toggleView: () => void toggleView($).catch(log('view switch')),
     addHunk: (file: DiffFile, index: number) => void addCaptured($, captureHunk(file, index)).catch(log('+hunk')),
     addFile: (file: DiffFile) => void addCaptured($, captureFile(file)).catch(log('+file')),
   }
@@ -267,6 +273,27 @@ async function toggleCommits($: EngineInterface): Promise<void> {
   const commits = !current.commits
   await update($, review, r => (r === null ? r : { ...r, commits }))
   if (current.info !== null) await rememberReview($, { ...current, commits }, current.info.dir)
+}
+
+/** Flips the pane between unified and side by side and remembers it for
+ * every later session. A store that cannot be written only loses the memory. */
+async function toggleView($: EngineInterface): Promise<void> {
+  const next: DiffView = (await read($, view)) === 'split' ? 'unified' : 'split'
+  await update($, view, () => next)
+  try {
+    await $.store.set(VIEW_KEY, next)
+  } catch (err) {
+    $.ui.log(`diff-explorer: could not remember the view: ${describeError(err)}`)
+  }
+}
+
+/** The view the store remembers, else unified. */
+async function storedView($: EngineInterface): Promise<DiffView> {
+  try {
+    return (await $.store.get(VIEW_KEY)) === 'split' ? 'split' : 'unified'
+  } catch {
+    return 'unified'
+  }
 }
 
 /** Opens the target the state names and fills in the Diff; the pane redraws as the state changes. */
@@ -360,6 +387,8 @@ export const register: Register = (on, options) => {
       description: 'Restore a file Claude edited to its committed version, after a confirmation',
       argumentHint: '<path>',
     })
+    const remembered = await storedView($)
+    await update($, view, () => remembered)
     // A review kept from before a reload comes back, unless the session now
     // runs outside its checkout: this build raises no event for a directory
     // change, so the start is where it shows.
@@ -512,7 +541,7 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) =>
-    renderPane($, e, await read($, review), await read($, anchor), paneActions($)),
+    renderPane($, e, await read($, review), await read($, anchor), paneActions($), await read($, view)),
   )
 
   // Typeahead for a #path:from-to token: the diff's paths, then one file's hunks.

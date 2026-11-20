@@ -658,11 +658,60 @@ test('a narrow pane wraps long lines: each gutter button is as tall as its line,
     expect(await height(0)).toBe(2)
     expect(await height(3)).toBe(2)
     expect(await height(4)).toBe(1)
-    // The head row breaks beside the switch, the file header beside its buttons.
-    expect(await ui.find({ type: 'Text', text: /^working tree ·$/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /^head000 →$/ })).toBeDefined()
+    // The switches move under the head, which takes the full width; the
+    // file header breaks beside its buttons.
+    expect(await ui.find({ type: 'Text', text: /^working tree · head000 →$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^origin\/HEAD$/ })).toBeDefined()
+    expect(await ui.find({ key: 'view' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /^src\/payments\/client$/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /^\.ts {2}\+3 −1$/ })).toBeDefined()
     await ui.unmount()
   }
+})
+
+test('the side-by-side switch draws each change beside what it replaced, and is remembered', async ($, on) => {
+  const toasts: string[] = []
+  const stored = new Map<string, unknown>()
+  on('store.get', (_, e) => ({ value: stored.get(e.key) }))
+  on('store.set', (_, e) => {
+    stored.set(e.key, e.value)
+
+    return { value: undefined }
+  })
+  await openSample($, on, { toasts, withStore: false })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await ui.find({ key: 'view' }))?.text).toBe('side-by-side: off')
+
+  await ui.press({ key: 'view' })
+  expect((await ui.find({ key: 'view' }))?.text).toBe('side-by-side: on')
+  expect(stored.get('view')).toBe('split')
+  // client.ts's first hunk at 60 columns: each side 29 cells, its gutter 3,
+  // the engine's prefix 5, so 21 cells of code. The deleted line beside the
+  // two added ones: 3 rows left, 2 + 2 right, so the block is 4 rows.
+  const block = async (b: number) => (await ui.find({ key: `block:hunk:src-payments-client-ts:0:${b}` }))?.props.height
+  expect([await block(0), await block(1), await block(2)]).toEqual([2, 4, 1])
+  const sources = (await ui.findAll({ type: 'Code' })).map(code => code.props.source)
+  expect(sources).toContain('@@ -41,1 +41,0 @@\n-  if (!res.ok) throw new Error(res.status);')
+  expect(sources).toContain('@@ -41,0 +41,2 @@\n+  if (!res.ok && retryable(res)) {\n+    return retry(() => charge(url, opts));')
+  expect(sources).toContain('@@ -42,1 +42,1 @@\n   return res.json();')
+  expect(sources).toContain('@@ -43,1 +43,1 @@\n   return res.json();')
+
+  // Each side's gutter shows its own numbers and picks a range as before.
+  expect((await ui.find({ key: 'line:old:src-payments-client-ts:0:1' }))?.text).toBe(' 41')
+  expect((await ui.find({ key: 'line:new:src-payments-client-ts:0:3' }))?.text).toBe(' 42')
+  await ui.press({ key: 'line:new:src-payments-client-ts:0:3' })
+  expect((await ui.find({ key: 'line:new:src-payments-client-ts:0:3' }))?.text).toBe('▸42')
+  await ui.press({ key: 'line:new:src-payments-client-ts:0:2' })
+  expect(toasts).toEqual(['Added client.ts:41-42 to the refs'])
+  await ui.unmount()
+
+  // A later session starts side by side.
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  const again = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await again.find({ key: 'view' }))?.text).toBe('side-by-side: on')
+  await again.press({ key: 'view' })
+  // Off again, a hunk is one Code once more.
+  const unified = (await again.findAll({ type: 'Code' })).map(code => code.props.source)
+  expect(unified.some(source => String(source).startsWith('@@ -40,3 +40,4 @@'))).toBe(true)
+  await again.unmount()
 })

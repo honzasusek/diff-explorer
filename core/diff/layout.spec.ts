@@ -54,11 +54,11 @@ test("a measure that wraps grows the headers, the lines and every row after them
   const wrapping: RowMeasure = {
     fileHeader: (f) => (f.id === "a" ? 2 : 1),
     hunkHeader: (f, h) => (f.id === "a" && h === f.hunks[0] ? 2 : 1),
-    line: (_, i) => (i === 1 ? 3 : 1),
+    body: (h) => h.lines.map((_, i) => (i === 1 ? 3 : 1)),
   };
   const layout = layoutDiff(diff, new Set(), 2, wrapping);
   assert.deepEqual(
-    layout.files.map((f) => [f.top, f.headerRows, f.hunks.map((h) => [h.top, h.rows, h.headerRows, h.lineRows])]),
+    layout.files.map((f) => [f.top, f.headerRows, f.hunks.map((h) => [h.top, h.rows, h.headerRows, h.bodyRows])]),
     [
       [2, 2, [[4, 7, 2, [1, 3, 1]], [11, 8, 1, [1, 3, 1, 1, 1]]]],
       [19, 1, []],

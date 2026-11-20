@@ -1,19 +1,23 @@
 import type { EngineInterface, RenderInput } from 'claude-code'
 
-import type { Review, ReviewFile } from '../types'
-import type { DiffFile, DiffLine, Hunk, HunkRow } from '../core/types.ts'
+import type { DiffView, Review, ReviewFile } from '../types'
+import type { DiffFile, DiffLine, Hunk, HunkRow, Side } from '../core/types.ts'
 import type { Anchor } from '../core/diff/selection.ts'
 import { hunksNear, layoutDiff } from '../core/diff/layout.ts'
 import type { RowMeasure } from '../core/diff/layout.ts'
 import { renderHunk, renderHunkHeader } from '../core/diff/patchRenderer.ts'
+import { sideDigits, sideNumber, sideSource, splitHunk } from '../core/diff/split.ts'
+import type { SplitBlock } from '../core/diff/split.ts'
 import { codeRows, wrapWords } from '../core/diff/wrap.ts'
 import { diffCache } from './state.ts'
 
-// The diff pane. Top to bottom: a head line with the auto-commit switch
-// (whether Claude may commit in this checkout), a status line, then every
-// file's header and its hunks, each hunk a diff Code under a header, with a
-// column of line-number buttons beside the Code: the gutter, where two
-// presses pick a range. Only the hunks near the scroll window are drawn; the
+// The diff pane. Top to bottom: a head line with two switches, the
+// side-by-side view and auto-commit (whether Claude may commit in this
+// checkout), a status line, then every file's header and its hunks, each
+// hunk a diff Code under a header, with a column of line-number buttons
+// beside the Code: the gutter, where two presses pick a range. Side by side,
+// a hunk is drawn as blocks (core/diff/split.ts), each side of a block its
+// own Code with its own gutter. Only the hunks near the scroll window are drawn; the
 // rest are Boxes of the same height, so the tree keeps the rows
 // core/diff/layout.ts computes and a drawing stays well under the engine's
 // 100,000 characters (research note, findings 4 and 5).
@@ -36,11 +40,16 @@ export interface PaneActions {
   addFile(file: DiffFile): void
   /** The head row's switch: whether Claude may commit in this checkout. */
   toggleCommits(): void
+  /** The head row's other switch: unified or side by side. */
+  toggleView(): void
 }
 
 /** Hunk text one drawing may hold. The engine cuts a drawing at 100,000
  * characters; the rest of the tree is small, so this leaves room. */
 const BUDGET = 80_000
+
+/** Cells the head's text keeps beside the switches before they move under it. */
+const HEAD_ROOM = 20
 
 const BADGES: Record<ReviewFile['status'], string> = {
   added: 'A',
@@ -122,19 +131,80 @@ function lineRows(hunk: Hunk, columns: number): number[] {
   return rows
 }
 
+/** Cells of each side in the side-by-side view: half the room, less the
+ * one cell between the sides. Both sides get the same width, so a context
+ * line wraps alike on both. */
+function sideWidth(columns: number): number {
+  return Math.floor((columns - 1) / 2)
+}
+
+/** One side of a block as drawn: the Code's source and each line's rows. */
+interface SplitSide {
+  indexes: number[]
+  source: string
+  /** Cells of the gutter's number. The engine pads its own numbers to the
+   * block's widest, so a block of 9s beside a block of 10s would start its
+   * code a cell further left; the gutter takes up that cell instead. */
+  labelDigits: number
+  lineRows: number[]
+  rows: number
+}
+
+interface SplitPiece {
+  block: SplitBlock
+  old: SplitSide
+  new: SplitSide
+}
+
+interface SplitHunk {
+  pieces: SplitPiece[]
+}
+
+const SPLIT = new WeakMap<Hunk, { columns: number; split: SplitHunk }>()
+
+/** The hunk side by side at `columns` cells, kept per hunk like lineRows. A
+ * side's code room is its width less its gutter (label + 1) and the engine's
+ * prefix in its Code (that block's digits + 3): with the label padded as
+ * SplitSide says, 2 * digits + 4 on every block. */
+function splitAt(hunk: Hunk, columns: number): SplitHunk {
+  const kept = SPLIT.get(hunk)
+  if (kept !== undefined && kept.columns === columns) return kept.split
+  const blocks = splitHunk(hunk)
+  const all = (side: 'left' | 'right') => blocks.flatMap(block => block[side])
+  // Each side's widest number in the whole hunk.
+  const digits = { old: sideDigits(hunk, all('left'), 'old'), new: sideDigits(hunk, all('right'), 'new') }
+  const width = sideWidth(columns)
+  const side = (indexes: number[], which: Side): SplitSide => {
+    const labelDigits = 2 * digits[which] - sideDigits(hunk, indexes, which)
+    const room = width - 2 * digits[which] - 4
+    const lineRows = indexes.map(i => codeRows(hunk.lines[i]?.content ?? '', room))
+    const rows = lineRows.reduce((a, n) => a + n, 0)
+
+    return { indexes, source: sideSource(hunk, indexes, which), labelDigits, lineRows, rows }
+  }
+  const pieces = blocks.map(block => ({ block, old: side(block.left, 'old'), new: side(block.right, 'new') }))
+  const split = { pieces }
+  SPLIT.set(hunk, { columns, split })
+
+  return split
+}
+
 /** The rows each part takes at `columns` cells, by the rules the drawing follows. */
-function measureAt(columns: number): RowMeasure {
+function measureAt(columns: number, view: DiffView): RowMeasure {
   return {
     fileHeader: (file, folded) => wrapWords(fileHeader(file), fileHeaderRoom(file, folded, columns)).length,
     hunkHeader: (_, hunk) => wrapWords(renderHunkHeader(hunk), columns - beside('+hunk')).length,
-    line: (hunk, index) => lineRows(hunk, columns)[index] ?? 1,
+    body: hunk =>
+      view === 'split'
+        ? splitAt(hunk, columns).pieces.map(piece => Math.max(piece.old.rows, piece.new.rows))
+        : lineRows(hunk, columns),
   }
 }
 
 /** The gutter label, one row: a mark on the anchored row, then the number
- * right-aligned to the hunk's widest. `▸42` and ` 41`. */
-function gutterLabel(line: DiffLine, digits: number, anchored: boolean): string {
-  return `${anchored ? '▸' : ' '}${String(rowNumber(line) ?? '').padStart(digits)}`
+ * right-aligned to the widest. `▸42` and ` 41`. */
+function gutterLabel(number: number | null, digits: number, anchored: boolean): string {
+  return `${anchored ? '▸' : ' '}${String(number ?? '').padStart(digits)}`
 }
 
 export function renderPane(
@@ -143,6 +213,7 @@ export function renderPane(
   current: Review | null,
   anchor: Anchor,
   actions: PaneActions,
+  view: DiffView = 'unified',
 ) {
   const { Box, Text, Button, Code } = $.ui.resolve(e)
 
@@ -162,7 +233,13 @@ export function renderPane(
       ? current.label
       : `${current.label} · ${info.headRefName ?? info.headSha.slice(0, 7)} → ${info.baseRefName ?? info.baseRef}`
   const switchLabel = `auto-commit: ${current.commits ? 'on' : 'off'}`
-  const headRows = wrapWords(head, columns - beside(switchLabel))
+  const viewLabel = `side-by-side: ${view === 'split' ? 'on' : 'off'}`
+  // The switches sit beside the head while it keeps HEAD_ROOM cells; in a
+  // narrower pane they move under it, on one row or, narrower still, two.
+  const switchCells = beside(viewLabel, switchLabel) - 1
+  const switchesBeside = columns - switchCells - 1 >= HEAD_ROOM
+  const switchRows = switchesBeside ? 0 : switchCells <= columns ? 1 : 2
+  const headRows = wrapWords(head, switchesBeside ? columns - switchCells - 1 : columns)
   const statusRows = wrapWords(statusLine(current), columns)
   const cached = diffCache.current
   const diff = info !== null && cached !== null && cached.key === info.key ? cached.diff : null
@@ -170,12 +247,17 @@ export function renderPane(
 
   const sections = []
   if (diff !== null) {
-    const layout = layoutDiff(diff, folded, headRows.length + statusRows.length, measureAt(columns))
+    const layout = layoutDiff(diff, folded, headRows.length + switchRows + statusRows.length, measureAt(columns, view))
     // The hunks near the window, in order, until the budget is spent.
     const sources = new Map<string, string>()
     let chars = 0
     for (const slot of hunksNear(layout, e.props.scroll)) {
-      const source = renderHunk(slot.hunk, { noNewlineNote: false })
+      const source =
+        view === 'split'
+          ? splitAt(slot.hunk, columns)
+              .pieces.map(piece => piece.old.source + piece.new.source)
+              .join('')
+          : renderHunk(slot.hunk, { noNewlineNote: false })
       if (chars + source.length > BUDGET) break
       chars += source.length
       sources.set(slot.key, source)
@@ -241,24 +323,63 @@ export function renderPane(
                     onPress={() => actions.addHunk(file, hunkSlot.index)}
                   />
                 </Box>
-                <Box flexDirection="row">
-                  <Box flexDirection="column" flexShrink={0}>
-                    {lines.map((line, row) => (
-                      <Box key={`gutter:${file.id}:${hunkSlot.index}:${row}`} height={hunkSlot.lineRows[row] ?? 1}>
-                        <Button
-                          key={`line:${file.id}:${hunkSlot.index}:${row}`}
-                          plain
-                          dimColor={row === anchoredRow ? undefined : true}
-                          label={gutterLabel(line, digits, row === anchoredRow)}
-                          onPress={() => actions.pressGutter({ file: file.path, hunk: hunkSlot.index, row })}
-                        />
+                {view === 'split' ? (
+                  <Box flexDirection="column">
+                    {splitAt(hunkSlot.hunk, columns).pieces.map((piece, b) => (
+                      <Box key={`block:${hunkSlot.key}:${b}`} flexDirection="row" gap={1} height={hunkSlot.bodyRows[b] ?? 1}>
+                        {(['old', 'new'] as const).map(which => {
+                          const side = piece[which]
+
+                          return (
+                            <Box key={`side:${which}:${hunkSlot.key}:${b}`} flexDirection="row" width={sideWidth(columns)} flexShrink={0}>
+                              <Box flexDirection="column" flexShrink={0}>
+                                {side.indexes.map((row, i) => (
+                                  <Box key={`gutter:${which}:${file.id}:${hunkSlot.index}:${row}`} height={side.lineRows[i] ?? 1}>
+                                    <Button
+                                      key={`line:${which}:${file.id}:${hunkSlot.index}:${row}`}
+                                      plain
+                                      dimColor={row === anchoredRow ? undefined : true}
+                                      label={gutterLabel(
+                                        lines[row] === undefined ? null : sideNumber(lines[row], which),
+                                        side.labelDigits,
+                                        row === anchoredRow,
+                                      )}
+                                      onPress={() => actions.pressGutter({ file: file.path, hunk: hunkSlot.index, row })}
+                                    />
+                                  </Box>
+                                ))}
+                              </Box>
+                              {side.source !== '' && (
+                                <Box flexGrow={1} flexShrink={1}>
+                                  <Code format="diff" source={side.source} path={file.path} wrap="wrap" />
+                                </Box>
+                              )}
+                            </Box>
+                          )
+                        })}
                       </Box>
                     ))}
                   </Box>
-                  <Box flexGrow={1} flexShrink={1}>
-                    <Code format="diff" source={source} path={file.path} wrap="wrap" />
+                ) : (
+                  <Box flexDirection="row">
+                    <Box flexDirection="column" flexShrink={0}>
+                      {lines.map((line, row) => (
+                        <Box key={`gutter:${file.id}:${hunkSlot.index}:${row}`} height={hunkSlot.bodyRows[row] ?? 1}>
+                          <Button
+                            key={`line:${file.id}:${hunkSlot.index}:${row}`}
+                            plain
+                            dimColor={row === anchoredRow ? undefined : true}
+                            label={gutterLabel(rowNumber(line), digits, row === anchoredRow)}
+                            onPress={() => actions.pressGutter({ file: file.path, hunk: hunkSlot.index, row })}
+                          />
+                        </Box>
+                      ))}
+                    </Box>
+                    <Box flexGrow={1} flexShrink={1}>
+                      <Code format="diff" source={source} path={file.path} wrap="wrap" />
+                    </Box>
                   </Box>
-                </Box>
+                )}
               </Box>
             )
           })}
@@ -267,18 +388,35 @@ export function renderPane(
     }
   }
 
+  const switches = [
+    <Button key="view" plain label={viewLabel} onPress={() => actions.toggleView()} />,
+    <Button key="commits" plain label={switchLabel} onPress={() => actions.toggleCommits()} />,
+  ]
+  const headText = (
+    <Box flexDirection="column" flexGrow={1} flexShrink={1}>
+      {headRows.map((row, i) => (
+        <Text key={`head:${i}`} bold wrap="truncate-end">
+          {row}
+        </Text>
+      ))}
+    </Box>
+  )
+
   return (
     <Box flexDirection="column">
-      <Box flexDirection="row" gap={1}>
-        <Box flexDirection="column" flexGrow={1} flexShrink={1}>
-          {headRows.map((row, i) => (
-            <Text key={`head:${i}`} bold wrap="truncate-end">
-              {row}
-            </Text>
-          ))}
+      {switchesBeside ? (
+        <Box flexDirection="row" gap={1}>
+          {headText}
+          {switches}
         </Box>
-        <Button key="commits" plain label={switchLabel} onPress={() => actions.toggleCommits()} />
-      </Box>
+      ) : (
+        headText
+      )}
+      {!switchesBeside && (
+        <Box flexDirection={switchRows === 1 ? 'row' : 'column'} gap={switchRows === 1 ? 1 : 0}>
+          {switches}
+        </Box>
+      )}
       {statusRows.map((row, i) => (
         <Text key={`status:${i}`} dimColor wrap="truncate-end">
           {row}

@@ -80,8 +80,11 @@ export type Review = {
   error: string | null
 }
 
+/** How the pane draws hunks: one column, or the old side beside the new. */
+export type DiffView = 'unified' | 'split'
+
 declare module 'claude-code' {
   interface PluginState {
-    'diff-explorer': { review: Shaped<Review | null>; basket: Shaped<Ref[]>; anchor: Shaped<Anchor | null> }
+    'diff-explorer': { review: Shaped<Review | null>; basket: Shaped<Ref[]>; anchor: Shaped<Anchor | null>; view: Shaped<DiffView> }
   }
 }
