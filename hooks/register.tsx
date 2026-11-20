@@ -6,6 +6,7 @@ import type { CodeRef, Diff, DiffFile, HunkRow, WorkspaceInfo } from '../core/ty
 import { basketReducer, markStale } from '../core/basket/basketReducer.ts'
 import { readConfig } from '../core/config.ts'
 import type { Config } from '../core/config.ts'
+import { glide } from '../core/diff/glide.ts'
 import { fileKey, hunkKey } from '../core/diff/layout.ts'
 import { hunkOfRef, promptWithRefs, refLabel, refsInText, suggestRefs } from '../core/diff/refs.ts'
 import { captureFile, captureHunk, captureRows, gutterPress } from '../core/diff/selection.ts'
@@ -24,7 +25,7 @@ import type { Outcome } from './commands.ts'
 import { plural, renderPane } from './pane.tsx'
 import type { PaneActions } from './pane.tsx'
 import { engineRunner } from './runner.ts'
-import { PANE, diffCache } from './state.ts'
+import { PANE, diffCache, motion, rowKeys } from './state.ts'
 
 // Bump the tag when Review's fields change: a reload keeps what the previous
 // version stored, and a different tag reads as the initial value instead.
@@ -213,7 +214,7 @@ async function gutterPressed($: EngineInterface, row: HunkRow): Promise<void> {
 
 /** Scrolls the pane to where a ref's lines are now: its hunk, or the file
  * header when the file is folded or the line is gone. */
-async function showRef($: EngineInterface, ref: CodeRef): Promise<void> {
+async function showRef($: EngineInterface, ref: CodeRef, smooth: boolean): Promise<void> {
   const diff = await openDiff($)
   const at = diff === null ? undefined : hunkOfRef(diff, ref)
   if (at === undefined) {
@@ -224,15 +225,27 @@ async function showRef($: EngineInterface, ref: CodeRef): Promise<void> {
   const current = await read($, review)
   const folded = current?.files?.find(f => f.id === at.file.id)?.folded === true
   const key = at.hunk === null || folded ? fileKey(at.file.id) : hunkKey(at.file.id, at.hunk)
+  const top = rowKeys.find(k => k.key === key)?.top
+  if (smooth && top !== undefined) {
+    // Glide there: every step but the last by row, the last to the key itself.
+    stopGlide()
+    motion.steps = glide(motion.shown, top, motion.bodyRows).slice(0, -1)
+    motion.target = key
+    if (motion.steps.length > 0) {
+      nextStep($)
+
+      return
+    }
+  }
   const scrolled = await $.ui.scroll({ in: PANE, to: { key }, block: 'start' }).catch(err => ({ deny: describeError(err) }))
   if (scrolled.deny !== undefined) $.ui.log(`diff-explorer: could not scroll to ${key}: ${scrolled.deny}`)
 }
 
-function bandActions($: EngineInterface): BandActions {
+function bandActions($: EngineInterface, smooth: boolean): BandActions {
   const log = (what: string) => (err: unknown) => $.ui.log(`diff-explorer: ${what} failed: ${describeError(err)}`)
 
   return {
-    show: ref => void showRef($, ref).catch(log('chip')),
+    show: ref => void showRef($, ref, smooth).catch(log('chip')),
     remove: id => void update($, basket, b => basketReducer(b, { type: 'remove', id })).catch(log('[x]')),
     addSelection: () =>
       void openDiff($)
@@ -267,6 +280,52 @@ async function toggleCommits($: EngineInterface): Promise<void> {
   const commits = !current.commits
   await update($, review, r => (r === null ? r : { ...r, commits }))
   if (current.info !== null) await rememberReview($, { ...current, commits }, current.info.dir)
+}
+
+/** Ms between the steps of a glide: about one redraw of a large pane. */
+const STEP_MS = 24
+
+function stopGlide(): void {
+  motion.timer?.cancel()
+  motion.timer = null
+  motion.steps = []
+  motion.target = null
+}
+
+/** The key of the last drawing's element whose top row is at or above `offset`. */
+function keyAt(offset: number): string | undefined {
+  let found: string | undefined
+  for (const at of rowKeys) {
+    if (at.top > offset) break
+    found = at.key
+  }
+
+  return found
+}
+
+/** Takes the glide's next step after a short wait: a scroll to the element
+ * at the step's row, which puts that row at the window's top. */
+function nextStep($: EngineInterface): void {
+  motion.timer = $.clock.after(STEP_MS, () => {
+    motion.timer = null
+    const offset = motion.steps.shift()
+    // The glide's last step goes to the element a chip asked for, when one did.
+    const key = offset === undefined ? (motion.target ?? undefined) : keyAt(offset)
+    if (offset === undefined) motion.target = null
+    if (key === undefined && offset === undefined) {
+      stopGlide()
+
+      return
+    }
+    // Above the first keyed row there are only the head rows: the top.
+    void $.ui
+      .scroll(key === undefined ? { in: PANE, to: 'start' } : { in: PANE, to: { key }, block: 'start' })
+      .then(r => {
+        if (r.deny !== undefined) stopGlide()
+        else if (motion.steps.length > 0 || motion.target !== null) nextStep($)
+      })
+      .catch(() => stopGlide())
+  })
 }
 
 /** Opens the target the state names and fills in the Diff; the pane redraws as the state changes. */
@@ -511,9 +570,35 @@ export const register: Register = (on, options) => {
     return { sections: [...below.sections, { id: SECTION_ID, text: reviewSection(summary), scope: 'session' }] }
   })
 
-  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) =>
-    renderPane($, e, await read($, review), await read($, anchor), paneActions($)),
-  )
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    motion.shown = e.props.scroll.offset
+    motion.bodyRows = e.props.scroll.bodyRows
+
+    return renderPane($, e, await read($, review), await read($, anchor), paneActions($))
+  })
+
+  // A jump of the pane's window by a page key, Home or End glides: the move
+  // lands on the first step of core/diff/glide.ts, and each later step is a
+  // scroll of this plugin's to the element at that row (the engine raises
+  // no ui.scroll here for a plugin's own scroll, so the steps are not
+  // steered by this hook). The wheel and the arrow keys move a row or so
+  // and pass as they are; any move of the person's stops a glide in flight.
+  on('ui.scroll', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+    if (!config.smoothScroll) return next(e)
+    stopGlide()
+    const from = e.origin.kind === 'person' ? e.offset - e.by : motion.shown
+    // A wheel tick carries the pointer; a key or a plugin's scroll has none
+    // (null in a session, though the types say absent).
+    const steps = e.pointer == null ? glide(from, e.offset, e.bodyRows) : [e.offset]
+    const [first = e.offset, ...rest] = steps
+    const result = await next({ ...e, offset: first })
+    if (result.deny === undefined && rest.length > 0) {
+      motion.steps = rest
+      nextStep($)
+    }
+
+    return result
+  })
 
   // Typeahead for a #path:from-to token: the diff's paths, then one file's hunks.
   on('prompt.autocomplete', { token: /^#/ }, async ($, e, next) => {
@@ -532,6 +617,6 @@ export const register: Register = (on, options) => {
 
     const refs = await read($, basket)
 
-    return renderBand($, e, refs, await staleIds($, refs), bandActions($))
+    return renderBand($, e, refs, await staleIds($, refs), bandActions($, config.smoothScroll))
   })
 }

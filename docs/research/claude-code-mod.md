@@ -78,6 +78,16 @@ Measured on Claude Code 2.1.329 with a throwaway mod at 71 body columns. A `Code
 
 `core/diff/wrap.ts` holds the rules. On the 11,565-row hono diff every gutter number sat on the row of the engine's own number at seven scroll positions, with up to 38 wrapped rows in view. Counting rows for every line costs 35 ms, so the pane keeps the counts per hunk until the width changes; a wheel tick then redraws in 23 ms median, as before wrapping.
 
+## Gliding the pane (2026-11-20)
+
+A pane scrolls by whole rows and the engine has no smooth scrolling of its own. What the mod can steer, measured on Claude Code 2.1.329:
+
+- A `ui.scroll` hook on the pane sees the person's moves and may rewrite `offset`. A page key arrives with `by` equal to `bodyRows`, End and Home with the distance to the end; a wheel tick with `by` 1 and a `pointer`. A key's `pointer` is `null` in a session, not absent as the types say.
+- A plugin's own `$.ui.scroll` does not raise that plugin's `ui.scroll` hook, so a later step cannot be steered there. `to: 'start'` and `to: 'end'` go to the edges.
+- `$.ui.scroll({ to: { key }, block: 'start' })` puts a keyed element's top at the window's top, but only a `Box` counts: a keyed `Text` is refused with "no element of its own is drawn under that key".
+
+So a glide (`core/diff/glide.ts`) lands the person's jump on its first step by rewriting `offset`, then takes each later step on a timer (`$.clock.after`) as a scroll to the keyed Box at that row. The pane keys every row it draws for that: a one-row Box under each gutter button per wrapped row, a Box around each header row. On the hono diff a PageDown went 0, 16, 27, 33, 37, 38 over 176 ms; End and a chip press landed a window short at once and eased the last window in; every glide ended exactly on its target.
+
 ## Large-diff pass (2026-11-19)
 
 Measured on Claude Code 2.1.327 with the finished pane, in the hono clone, the working tree against the merge-base with `origin/main`: 122 files, 258 hunks, 13,326 diff lines, 11,565 pane rows, a 481 KB patch. Driven in a pseudo-terminal at 160 columns (the pane docked at 71 body columns, 38 body rows), a wheel tick or a PageDown measured from the key to the first change of the pane's text.

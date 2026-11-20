@@ -179,6 +179,8 @@ Selection, from the reviewer's side:
 | press a chip | `$.ui.scroll` to the hunk that holds the ref |
 | `[x]` on a chip | removes it |
 
+Jumps glide (option `smoothScroll`, on by default): a page key, Home, End or a chip press moves the window through a few eased steps (`core/diff/glide.ts`) instead of at once, the first step a rewrite of the move in a `ui.scroll` hook, the rest scrolls to keyed rows on a timer (research note, "Gliding the pane"). The wheel and the arrow keys move a row at a time as the engine does.
+
 What the engine gives for free and the mod must not reimplement: wheel and key scrolling of the pane, `ctrl+x tab` and click to focus, Tab walking of buttons, `Esc`, docking from 110 columns, closing the pane, text selection and copy.
 
 ### 4.6 Commands

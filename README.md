@@ -47,6 +47,7 @@ In `/config`, under diff-explorer:
 | Default base ref | empty | What `/explore .` and `/explore <branch>` measure from when no base ref is typed. Empty tries `origin/HEAD`, then `main`, then `master`. A pull request keeps its own base branch. |
 | Fold threshold | 1500 | Changed lines from which a file starts folded; 0 folds every file. |
 | Inline pane rows | 0 | Body rows the pane asks for while it sits above the prompt, in a terminal under 110 columns. 0 leaves it to the layout. The dock beside a wide transcript ignores it. |
+| Smooth scrolling | on | A page key, Home, End or a chip press glides the pane to its place in a few quick steps instead of jumping. The wheel and the arrow keys move a row at a time either way. |
 
 ## Development
 
