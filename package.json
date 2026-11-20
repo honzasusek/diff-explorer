@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Claude Code mod: review a pull request's diff in a pane beside the chat and ask Claude about selected lines",
+  "license": "MIT",
   "scripts": {
     "test": "node --test \"core/**/*.spec.ts\"",
     "check": "claude plugin validate . && tsc -p core && tsc -p tsconfig.test.json && tsc -p .",

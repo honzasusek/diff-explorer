@@ -2,6 +2,7 @@
   "name": "diff-explorer",
   "version": "0.1.0",
   "description": "Review a pull request's diff in a pane beside the chat and ask Claude about selected lines",
+  "license": "MIT",
   "types": "./types/index.d.ts",
   "author": {
     "name": "Honza Sušek"
