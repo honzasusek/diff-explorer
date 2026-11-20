@@ -25,12 +25,6 @@
       "title": "Inline pane rows",
       "description": "Body rows the pane asks for while it sits above the prompt, in a terminal under 110 columns. 0 leaves it to the layout, a third of the screen. The dock beside a wide transcript ignores it.",
       "default": 0
-    },
-    "smoothScroll": {
-      "type": "boolean",
-      "title": "Smooth scrolling",
-      "description": "A page key, Home, End or a press on a ref chip glides the pane to its place in a few quick steps instead of jumping. The wheel and the arrow keys always move a row at a time.",
-      "default": true
     }
   }
 }

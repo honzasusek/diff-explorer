@@ -7,7 +7,7 @@ import { hunksNear, layoutDiff } from '../core/diff/layout.ts'
 import type { RowMeasure } from '../core/diff/layout.ts'
 import { renderHunk, renderHunkHeader } from '../core/diff/patchRenderer.ts'
 import { codeRows, wrapWords } from '../core/diff/wrap.ts'
-import { diffCache, rowKeys } from './state.ts'
+import { diffCache } from './state.ts'
 
 // The diff pane. Top to bottom: a head line with the auto-commit switch
 // (whether Claude may commit in this checkout), a status line, then every
@@ -98,13 +98,6 @@ function beside(...labels: string[]): number {
   return labels.reduce((cells, label) => cells + label.length + 1, 0)
 }
 
-const gutterKey = (fileId: string, hunk: number, row: number) => `gutter:${fileId}:${hunk}:${row}`
-/** Keys of single rows, so a scroll can put any row at the window's top: a
- * line's rows under its gutter button, a header's rows. */
-const gutterRowKey = (fileId: string, hunk: number, row: number, i: number) => `gutter:${fileId}:${hunk}:${row}:${i}`
-const fileRowKey = (fileId: string, i: number) => `fh:${fileId}:${i}`
-const hunkRowKey = (hunkKey: string, i: number) => `hh:${hunkKey}:${i}`
-
 const foldLabel = (folded: boolean) => (folded ? 'unfold' : 'fold')
 
 /** The cells left for a file header's text beside its buttons. */
@@ -187,21 +180,6 @@ export function renderPane(
       chars += source.length
       sources.set(slot.key, source)
     }
-    // Every row the drawing keys, by its top: the glide scrolls to these.
-    rowKeys.length = 0
-    for (const slot of layout.files) {
-      for (let i = 0; i < slot.headerRows; i++) rowKeys.push({ top: slot.top + i, key: fileRowKey(slot.file.id, i) })
-      for (const hunkSlot of slot.hunks) {
-        rowKeys.push({ top: hunkSlot.top, key: hunkSlot.key })
-        if (!sources.has(hunkSlot.key)) continue
-        for (let i = 1; i < hunkSlot.headerRows; i++) rowKeys.push({ top: hunkSlot.top + i, key: hunkRowKey(hunkSlot.key, i) })
-        let top = hunkSlot.top + hunkSlot.headerRows
-        hunkSlot.lineRows.forEach((rows, row) => {
-          for (let i = 0; i < rows; i++) rowKeys.push({ top: top + i, key: gutterRowKey(slot.file.id, hunkSlot.index, row, i) })
-          top += rows
-        })
-      }
-    }
     for (const slot of layout.files) {
       const file = slot.file
       const isFolded = folded.has(file.id)
@@ -210,11 +188,9 @@ export function renderPane(
           <Box flexDirection="row" gap={1}>
             <Box flexDirection="column" flexGrow={1} flexShrink={1}>
               {wrapWords(fileHeader(file), fileHeaderRoom(file, isFolded, columns)).map((row, i) => (
-                <Box key={fileRowKey(file.id, i)} height={1}>
-                  <Text bold wrap="truncate-end">
-                    {row}
-                  </Text>
-                </Box>
+                <Text key={`fh:${file.id}:${i}`} bold wrap="truncate-end">
+                  {row}
+                </Text>
               ))}
             </Box>
             {file.hunks.length > 0 && (
@@ -252,11 +228,9 @@ export function renderPane(
                 <Box flexDirection="row" gap={1}>
                   <Box flexDirection="column" flexGrow={1} flexShrink={1}>
                     {wrapWords(header, columns - beside('+hunk')).map((row, i) => (
-                      <Box key={hunkRowKey(hunkSlot.key, i)} height={1}>
-                        <Text dimColor wrap="truncate-end">
-                          {row}
-                        </Text>
-                      </Box>
+                      <Text key={`hh:${hunkSlot.key}:${i}`} dimColor wrap="truncate-end">
+                        {row}
+                      </Text>
                     ))}
                   </Box>
                   <Button
@@ -270,23 +244,14 @@ export function renderPane(
                 <Box flexDirection="row">
                   <Box flexDirection="column" flexShrink={0}>
                     {lines.map((line, row) => (
-                      <Box
-                        key={gutterKey(file.id, hunkSlot.index, row)}
-                        flexDirection="column"
-                        height={hunkSlot.lineRows[row] ?? 1}
-                      >
-                        <Box key={gutterRowKey(file.id, hunkSlot.index, row, 0)} height={1}>
-                          <Button
-                            key={`line:${file.id}:${hunkSlot.index}:${row}`}
-                            plain
-                            dimColor={row === anchoredRow ? undefined : true}
-                            label={gutterLabel(line, digits, row === anchoredRow)}
-                            onPress={() => actions.pressGutter({ file: file.path, hunk: hunkSlot.index, row })}
-                          />
-                        </Box>
-                        {Array.from({ length: (hunkSlot.lineRows[row] ?? 1) - 1 }, (_, i) => (
-                          <Box key={gutterRowKey(file.id, hunkSlot.index, row, i + 1)} height={1} />
-                        ))}
+                      <Box key={`gutter:${file.id}:${hunkSlot.index}:${row}`} height={hunkSlot.lineRows[row] ?? 1}>
+                        <Button
+                          key={`line:${file.id}:${hunkSlot.index}:${row}`}
+                          plain
+                          dimColor={row === anchoredRow ? undefined : true}
+                          label={gutterLabel(line, digits, row === anchoredRow)}
+                          onPress={() => actions.pressGutter({ file: file.path, hunk: hunkSlot.index, row })}
+                        />
                       </Box>
                     ))}
                   </Box>

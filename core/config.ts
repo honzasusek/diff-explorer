@@ -4,7 +4,7 @@
 // for a value that cannot be used, so no hook ever sees a bad one.
 //
 // `readConfig({ baseRef: " develop ", foldLines: -1, inlineRows: 12 })` gives
-// `{ baseRef: "develop", foldLines: 1500, inlineRows: 12, smoothScroll: true }`: the negative
+// `{ baseRef: "develop", foldLines: 1500, inlineRows: 12 }`: the negative
 // threshold falls back to the default.
 
 export interface Config {
@@ -17,12 +17,9 @@ export interface Config {
   /** Body rows the pane asks for while inline above the prompt; null leaves
    * it to the layout, a third of the screen. The dock ignores it. */
   inlineRows: number | null;
-  /** Whether a page key, Home, End or a chip press glides the pane to its
-   * place in a few steps (core/diff/glide.ts) instead of jumping there. */
-  smoothScroll: boolean;
 }
 
-export const DEFAULT_CONFIG: Config = { baseRef: null, foldLines: 1500, inlineRows: null, smoothScroll: true };
+export const DEFAULT_CONFIG: Config = { baseRef: null, foldLines: 1500, inlineRows: null };
 
 /** A whole number at or above zero, from a number or a numeric string; null otherwise. */
 function wholeNumber(value: unknown): number | null {
@@ -42,6 +39,5 @@ export function readConfig(raw: Readonly<Record<string, unknown>>): Config {
     baseRef: refOrNull(raw["baseRef"]),
     foldLines: wholeNumber(raw["foldLines"]) ?? DEFAULT_CONFIG.foldLines,
     inlineRows: inlineRows === null || inlineRows === 0 ? null : inlineRows,
-    smoothScroll: typeof raw["smoothScroll"] === "boolean" ? raw["smoothScroll"] : DEFAULT_CONFIG.smoothScroll,
   };
 }
