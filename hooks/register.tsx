@@ -338,10 +338,18 @@ async function openCurrent($: EngineInterface, current: Review, config: Config):
 async function refresh($: EngineInterface, config: Config): Promise<void> {
   const current = await read($, review)
   if (current === null || current.info === null) return
-  await update($, anchor, () => null)
   try {
     const ws = createWorkspace(engineRunner($), await $.session.cwd(), toWorkspaceInfo(current.info))
     const diff = await ws.diff()
+    // Most Bash calls change nothing: keep the anchor and skip the redraw.
+    const cached = diffCache.current
+    const unchanged =
+      current.phase === 'open' &&
+      cached !== null &&
+      cached.key === current.info.key &&
+      JSON.stringify(cached.diff) === JSON.stringify(diff)
+    if (unchanged) return
+    await update($, anchor, () => null)
     diffCache.current = { key: current.info.key, diff }
     const refreshed = (r: Review): Review => ({
       ...r,
@@ -484,6 +492,22 @@ export const register: Register = (on, options) => {
 
     return next(e)
   }).catch(($, e, next) => (next.called ? next(e) : { deny: COMMITS_OFF }))
+
+  // A Bash command can change the checkout in ways no Edit does: `rm`,
+  // `git rm`, `mv`, a formatter. Claude deletes files this way, so after
+  // every Bash call that ran, the Diff is recomputed; refresh leaves the
+  // pane alone when nothing changed.
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    const result = await next(e)
+    try {
+      const current = await read($, review)
+      if (current?.info !== null && current?.info !== undefined && result.deny === undefined) await refresh($, config)
+    } catch (err) {
+      $.ui.log(`diff-explorer: refresh after Bash failed: ${describeError(err)}`)
+    }
+
+    return result
+  })
 
   // After Claude edits a file of the checkout the Diff is recomputed: the
   // file gets its dirty mark in the pane and a ref whose lines changed its

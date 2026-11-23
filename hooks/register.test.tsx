@@ -484,6 +484,34 @@ test('an Edit in the checkout refreshes the diff: a dirty mark on the file, a st
   expect(sent.text).toContain('<code_ref id="r2" file="src/payments/retry.ts" side="new" lines="1-3">')
 })
 
+test('a Bash command that deletes a file refreshes the diff: the file leaves the pane and the prompt', async ($, on) => {
+  const repo = sampleRepo()
+  let bash = 0
+  on('tool.call', { tool: 'Bash' }, () => {
+    bash++
+
+    return { result: { stdout: '', stderr: '', interrupted: false } }
+  })
+  on('prompt.compose', () => ({ sections: ENGINE_SECTIONS }))
+  await openSample($, on, { repo })
+  let pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await pane.find({ type: 'Text', text: /^A src\/payments\/retry\.ts/ })).toBeDefined()
+  await pane.unmount()
+
+  // Claude removes the file it added: git no longer lists it.
+  repo.patch = SAMPLE_PATCH.slice(0, SAMPLE_PATCH.indexOf('diff --git a/src/payments/retry.ts')) +
+    SAMPLE_PATCH.slice(SAMPLE_PATCH.indexOf('diff --git a/README.md'))
+  const called = await $.tool.call({ tool: 'Bash', command: 'rm src/payments/retry.ts' })
+  expect(called.deny).toBeUndefined()
+  expect(bash).toBe(1)
+  pane = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await pane.find({ type: 'Text', text: /^A src\/payments\/retry\.ts/ })).toBeUndefined()
+  expect(await pane.find({ type: 'Text', text: /^3 files · \+4 −5$/ })).toBeDefined()
+  await pane.unmount()
+  const section = (await $.prompt.compose(COMPOSE)).sections[1]?.text ?? ''
+  expect(section).not.toContain('retry.ts')
+})
+
 test('/revert restores a dirty file once the person confirms, and explains every other case', async ($, on) => {
   const repo = sampleRepo()
   repo.status = ' M src/payments/client.ts\0'
