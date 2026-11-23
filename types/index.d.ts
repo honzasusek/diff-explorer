@@ -53,6 +53,8 @@ export type Ref = {
   start: number
   end: number
   lines: RefLine[]
+  /** Set when the ref holds the whole file, every line, not a range of it. */
+  whole?: true
 }
 
 /** The row of the first gutter press, waiting for the second; core's HunkRow. */

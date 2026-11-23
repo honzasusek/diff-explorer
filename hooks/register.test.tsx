@@ -37,6 +37,22 @@ const PATCH = [
   '',
 ].join('\n')
 
+/** client.ts with every line as context, as `git diff -U<all>` prints it,
+ * shortened to a file of five lines. */
+const WHOLE_CLIENT = [
+  'diff --git a/src/payments/client.ts b/src/payments/client.ts',
+  '--- a/src/payments/client.ts',
+  '+++ b/src/payments/client.ts',
+  '@@ -1,4 +1,5 @@',
+  " import { fetch } from './net';",
+  '   const res = await fetch(url, opts);',
+  '-  if (!res.ok) throw new Error(res.status);',
+  '+  if (!res.ok && retryable(res)) {',
+  '+    return retry(() => charge(url, opts));',
+  '   return res.json();',
+  '',
+].join('\n')
+
 type Answer = { exitCode: number; stdout: string; stderr: string }
 
 /** Canned git for a working tree whose diff against the base is `patch` and
@@ -52,6 +68,7 @@ function gitAnswer(argv: readonly string[], patch = PATCH, status = ''): Answer 
   if (line.includes('status --porcelain=v1 -z')) return ok(status)
   if (line.includes('diff --name-status -z -M base000')) return ok('M\0src/client.ts\0')
   if (line.includes('diff --numstat -z -M base000 -- src/client.ts')) return ok('2\t1\tsrc/client.ts\0')
+  if (line.includes('-U2147483647 base000 -- src/payments/client.ts')) return ok(WHOLE_CLIENT)
   if (line.includes('restore --source=HEAD') || line.includes('clean --force')) return ok('')
 
   return { exitCode: 1, stdout: '', stderr: `unexpected: ${line}` }
@@ -282,7 +299,7 @@ test('the pane adds a hunk, a file, and a gutter range on the second press', asy
   await ui.press({ key: 'hunk+:src-payments-client-ts:1' })
   expect(toasts).toEqual(['Added client.ts:81-83 to the refs'])
   await ui.press({ key: 'file+:src-payments-retry-ts' })
-  expect(toasts[1]).toBe('Added retry.ts:1-3 to the refs')
+  expect(toasts[1]).toBe('Added retry.ts:1-3, the whole file, to the refs')
 
   // The first press anchors and marks the row; the second, in either
   // order, adds the rows between and clears the mark.
@@ -742,4 +759,17 @@ test('the side-by-side switch draws each change beside what it replaced, and is 
   const unified = (await again.findAll({ type: 'Code' })).map(code => code.props.source)
   expect(unified.some(source => String(source).startsWith('@@ -40,3 +40,4 @@'))).toBe(true)
   await again.unmount()
+})
+
+test('+file on a changed file adds the whole file, unchanged lines included', async ($, on) => {
+  const toasts: string[] = []
+  on('prompt.submit', (_, e) => ({ text: e.text }))
+  await openSample($, on, { toasts })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'file+:src-payments-client-ts' })
+  expect(toasts).toEqual(['Added client.ts:1-5, the whole file, to the refs'])
+  await ui.unmount()
+  const sent = await $.prompt.submit({ ...PROMPT, text: 'explain' })
+  expect(sent.text).toContain('lines="1-5"')
+  expect(sent.text).toContain("import { fetch } from './net';")
 })

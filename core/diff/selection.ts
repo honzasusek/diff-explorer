@@ -94,11 +94,14 @@ export function captureHunk(file: DiffFile, hunkIndex: number): CodeRef | undefi
   return hunk === undefined ? undefined : refFor(file.path, hunk.lines);
 }
 
-/** Every changed hunk of the file, not the file whole (ADR-0003); a binary
- * or empty file has none. */
-export function captureFile(file: DiffFile): CodeRef | undefined {
-  return refFor(
+/** Every line of the file's hunks. Given the file as Workspace.wholeFile
+ * returns it, with `{ whole: true }`, that is the whole file and the ref says
+ * so; given the Diff's own file, the changed hunks. A binary or empty file
+ * has none. */
+export function captureFile(file: DiffFile, options: { whole?: boolean } = {}): CodeRef | undefined {
+  const ref = refFor(
     file.path,
     file.hunks.flatMap((h) => h.lines),
   );
+  return ref === undefined || options.whole !== true ? ref : { ...ref, whole: true };
 }

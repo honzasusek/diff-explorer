@@ -148,6 +148,29 @@ test("uncommitted edits, renames and untracked files are dirty; untracked ones a
   assert.deepEqual(diff.files.find((f) => f.path === "empty.txt")!.hunks, []);
 });
 
+test("wholeFile gives every line of a changed file, renamed or not; an added file is whole already", async () => {
+  const { work } = await makeRepos();
+  await sh(work, "git", "checkout", "--quiet", "feature");
+  const lines = Array.from({ length: 12 }, (_, i) => `line ${i + 1}`);
+  writeFileSync(join(work, "long.txt"), lines.join("\n") + "\n");
+  await sh(work, "git", "add", "long.txt");
+  await sh(work, "git", "commit", "--quiet", "-m", "long");
+  const ws = createWorkspace(nodeRunner, work);
+  await ws.open({ kind: "worktree" }, { baseRef: "HEAD" });
+  writeFileSync(join(work, "long.txt"), lines.map((l, i) => (i === 10 ? "line eleven" : l)).join("\n") + "\n");
+  writeFileSync(join(work, "fresh.txt"), "f\n");
+  const diff = await ws.diff();
+  const long = diff.files.find((f) => f.path === "long.txt")!;
+  // Three lines of context: lines 8 to 12 only.
+  assert.equal(long.hunks[0]!.lines[0]!.newNo, 8);
+  const whole = (await ws.wholeFile(long))!;
+  assert.equal(whole.hunks.length, 1);
+  assert.deepEqual(whole.hunks[0]!.lines.map((l) => l.newNo ?? l.oldNo), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 11, 12]);
+  assert.equal(whole.dirty, true);
+  const fresh = diff.files.find((f) => f.path === "fresh.txt")!;
+  assert.equal(await ws.wholeFile(fresh), fresh);
+});
+
 test("revert restores tracked edits, removes untracked files, undoes renames and refuses clean files", async () => {
   const { work } = await makeRepos();
   await sh(work, "git", "checkout", "--quiet", "feature");

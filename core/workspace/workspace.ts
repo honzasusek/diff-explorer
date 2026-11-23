@@ -19,6 +19,11 @@ export interface Workspace {
   diff(): Promise<Diff>;
   /** Restores a Dirty File to the committed Head, or deletes it when untracked. */
   revert(path: string): Promise<void>;
+  /** The file of the Diff with every line of it in its hunks, not just three
+   * around each change: one hunk from line 1 to the end. An added or deleted
+   * file is whole already, and so is a binary one with no lines; a patch too
+   * large for the Runner gives null. */
+  wholeFile(file: DiffFile): Promise<DiffFile | null>;
 }
 
 const GIT = ["git", "-c", "core.quotePath=false"];
@@ -26,6 +31,8 @@ const GIT = ["git", "-c", "core.quotePath=false"];
 const DIFF_ARGS = ["diff", "--no-color", "--no-ext-diff", "-M", "-U3"];
 const SLOW_MS = 600_000;
 const DIFF_MS = 120_000;
+/** Context lines that cover any file: git's largest count. */
+const ALL_CONTEXT = 2_147_483_647;
 const PR_FIELDS = "number,title,body,author,url,baseRefName,headRefName,headRefOid,state,isDraft,additions,deletions,changedFiles";
 const BASE_CANDIDATES = ["origin/HEAD", "main", "master"];
 
@@ -355,5 +362,17 @@ export function createWorkspace(runner: Runner, cwd: string, opened?: WorkspaceI
     await git(["restore", "--source=HEAD", "--staged", "--worktree", "--", entry.path]);
   }
 
-  return { open, diff, revert };
+  async function wholeFile(file: DiffFile): Promise<DiffFile | null> {
+    if (!info) throw new WorkspaceError("GitFailed", "no target is open");
+    if (file.binary || file.status === "added" || file.status === "deleted") return file;
+    const paths = file.oldPath !== null && file.oldPath !== file.path ? [file.oldPath, file.path] : [file.path];
+    const args = ["diff", "--no-color", "--no-ext-diff", "-M", `-U${ALL_CONTEXT}`, info.baseSha, "--", ...paths];
+    const res = await git(args, { timeoutMs: DIFF_MS });
+    if (res.isStdoutTruncated === true) return null;
+    const whole = parseUnifiedDiff(res.stdout).find((f) => f.path === file.path);
+    // No patch: the file matches Base again, and its own hunks are all there is.
+    return whole === undefined ? file : { ...whole, dirty: file.dirty };
+  }
+
+  return { open, diff, revert, wholeFile };
 }

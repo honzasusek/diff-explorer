@@ -4,6 +4,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { DiffView, Review, ReviewFile, ReviewInfo } from '../types'
 import type { CodeRef, Diff, DiffFile, HunkRow, WorkspaceInfo } from '../core/types.ts'
 import { basketReducer, markStale } from '../core/basket/basketReducer.ts'
+import { isWholeFileFresh } from '../core/basket/wholeFile.ts'
 import { readConfig } from '../core/config.ts'
 import type { Config } from '../core/config.ts'
 import { fileKey, hunkKey } from '../core/diff/layout.ts'
@@ -183,7 +184,15 @@ async function openDiff($: EngineInterface): Promise<Diff | null> {
 async function staleIds($: EngineInterface, refs: CodeRef[]): Promise<Set<string>> {
   const diff = await openDiff($)
 
-  return new Set(diff === null ? [] : markStale(refs, diff))
+  if (diff === null) return new Set()
+  // A whole-file ref has a rule of its own (core/basket/wholeFile.ts).
+  const ranges = markStale(
+    refs.filter(ref => ref.whole !== true),
+    diff,
+  )
+  const wholes = refs.filter(ref => ref.whole === true && !isWholeFileFresh(ref, diff)).map(ref => ref.id)
+
+  return new Set([...ranges, ...wholes])
 }
 
 /** Puts a ref in the Basket and says whether it was new there. */
@@ -203,7 +212,24 @@ async function addRef($: EngineInterface, ref: CodeRef): Promise<Outcome> {
 async function addCaptured($: EngineInterface, ref: CodeRef | undefined): Promise<void> {
   if (ref === undefined) return
   const outcome = await addRef($, ref)
-  $.ui.toast(outcome === 'added' ? `Added ${refLabel(ref)} to the refs` : `${refLabel(ref)} is already in the refs`)
+  const label = ref.whole === true ? `${refLabel(ref)}, the whole file,` : refLabel(ref)
+  $.ui.toast(outcome === 'added' ? `Added ${label} to the refs` : `${label} is already in the refs`)
+}
+
+/** `+file`: every line of the file as it stands, changed or not. A file too
+ * large to fetch whole falls back to its changed hunks, and the toast says so. */
+async function addWholeFile($: EngineInterface, file: DiffFile): Promise<void> {
+  const info = (await read($, review))?.info ?? null
+  if (info === null) return
+  const ws = createWorkspace(engineRunner($), await $.session.cwd(), toWorkspaceInfo(info))
+  const whole = await ws.wholeFile(file)
+  if (whole === null) {
+    $.ui.toast(`${file.path} is too large to add whole; adding its changed hunks`)
+    await addCaptured($, captureFile(file))
+
+    return
+  }
+  await addCaptured($, captureFile(whole, { whole: true }))
 }
 
 /** The gutter gesture (core/diff/selection.ts): the anchor moves, clears, or
@@ -262,7 +288,7 @@ function paneActions($: EngineInterface): PaneActions {
     toggleCommits: () => void toggleCommits($).catch(log('commits switch')),
     toggleView: () => void toggleView($).catch(log('view switch')),
     addHunk: (file: DiffFile, index: number) => void addCaptured($, captureHunk(file, index)).catch(log('+hunk')),
-    addFile: (file: DiffFile) => void addCaptured($, captureFile(file)).catch(log('+file')),
+    addFile: (file: DiffFile) => void addWholeFile($, file).catch(log('+file')),
   }
 }
 

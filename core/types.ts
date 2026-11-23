@@ -108,4 +108,6 @@ export interface CodeRef {
   start: number;
   end: number;
   lines: DiffLine[];
+  /** Set when the ref holds the whole file, every line, not a range of it. */
+  whole?: true;
 }
