@@ -39,8 +39,10 @@ const anchor = atom({ plugin: 'diff-explorer', key: 'anchor' } as const, null, {
 /** How the pane draws hunks: one column, or the old side beside the new. */
 const view = atom({ plugin: 'diff-explorer', key: 'view' } as const, 'unified', { shape: 'view-1' })
 
-/** Body columns to ask the dock for; the engine caps a dock at 45% of the terminal. */
-const PANE_COLUMNS = 80
+/** Body columns to ask the dock for: more than any terminal has, so the
+ * dock opens as wide as the engine allows, 45% of the terminal (on a 220
+ * column terminal, 99 columns). A width the person drags still wins. */
+const PANE_COLUMNS = 10_000
 
 /** The store key of the last target per repository (core/workspace/recent.ts). */
 const RECENT_KEY = 'recent'
