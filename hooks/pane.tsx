@@ -61,18 +61,17 @@ export function scrolledPercent(rows: number, scroll: { offset: number; bodyRows
   return Math.min(100, Math.max(0, Math.round((scroll.offset / room) * 100)))
 }
 
-/** The sticky row's text: the head cut to fit `room` cells, then the percent
- * after it. The head is padded so the two fill `room` exactly, because the
+/** The sticky row's text: the head cut to fit `room` cells, then the fold
+ * count and the percent after it. The head is padded so the two fill `room` exactly, because the
  * row is painted over the diff, and a cell it leaves out would let the line
- * beneath show through. `stickyRow('working tree · main', 42, 30)` gives
- * head `'working tree · main        '` and percent `'42%'`. */
-export function stickyRow(head: string, percent: number, room: number): { head: string; percent: string } {
-  const label = `${percent}%`
+ * beneath show through. `stickyRow('working tree · main', '1/3 folded 42%', 40)`
+ * gives head `'working tree · main       '` and label `'1/3 folded 42%'`. */
+export function stickyRow(head: string, label: string, room: number): { head: string; label: string } {
   const space = Math.max(0, room - label.length - 1)
   const cut = space === 0 ? '' : (wrapWords(head, space)[0] ?? '')
   const shown = textWidth(cut) > space ? '' : cut
 
-  return { head: shown + ' '.repeat(Math.max(0, room - label.length - textWidth(shown))), percent: label }
+  return { head: shown + ' '.repeat(Math.max(0, room - label.length - textWidth(shown))), label }
 }
 
 /** `text` with spaces after it to fill `width` cells, so a row laid over the
@@ -277,9 +276,13 @@ export function renderPane(
 
   const sections = []
   let percent: number | null = null
+  // Of the files that have hunks to fold, how many are folded: `1/3 folded`.
+  let foldedCount = ''
   if (diff !== null) {
     const layout = layoutDiff(diff, folded, headRows.length + switchRows + statusRows.length, measureAt(columns, view))
     percent = scrolledPercent(layout.rows, e.props.scroll)
+    const foldable = diff.files.filter(file => file.hunks.length > 0)
+    foldedCount = `${foldable.filter(file => folded.has(file.id)).length}/${foldable.length} folded`
     // The hunks near the window, in order, until the budget is spent.
     const sources = new Map<string, string>()
     let chars = 0
@@ -435,15 +438,15 @@ export function renderPane(
   )
 
   // Once the head has scrolled away, a sticky head stands in for it at the
-  // window's top: the head, how far down the diff the window is, and the two
-  // switches, beside it or under it as in the head proper. It is laid over the
-  // diff, out of the flow, so the rows the layout counted do not move. Every
+  // window's top: the head, how many files are folded, how far down the diff
+  // the window is, and the two switches, beside it or under it as in the head
+  // proper. It is laid over the diff, out of the flow, so the rows the layout counted do not move. Every
   // cell is written, the gaps as spaces, so no line beneath shows through. At
   // the top nothing is laid over, and the head shows as drawn.
   const sticky = (percent: number) => {
-    const percentCells = `${percent}%`.length + 1
-    const stickyBeside = columns - switchCells - 1 - percentCells >= HEAD_ROOM
-    const row = stickyRow(head, percent, stickyBeside ? columns - switchCells - 1 : columns)
+    const label = `${foldedCount} ${percent}%`
+    const stickyBeside = columns - switchCells - 1 - (label.length + 1) >= HEAD_ROOM
+    const row = stickyRow(head, label, stickyBeside ? columns - switchCells - 1 : columns)
     const gap = (key: string) => <Text key={key}> </Text>
 
     return (
@@ -452,7 +455,7 @@ export function renderPane(
           <Text bold wrap="truncate-end">
             {row.head}
           </Text>
-          <Text dimColor>{row.percent}</Text>
+          <Text dimColor>{row.label}</Text>
           {stickyBeside && [gap('gap:1'), stickySwitches[0], gap('gap:2'), stickySwitches[1]]}
         </Box>
         {!stickyBeside && switchRows <= 1 && (

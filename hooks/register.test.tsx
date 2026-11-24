@@ -197,7 +197,8 @@ test('a large file starts folded; unfolding draws the hunks near the window and 
   await ui.redraw({ ...PANE.props, scroll: { offset: 650, bodyRows: 20 } })
   // 1806 rows in a window of 20 can move 1786, and 650 of them is 36%.
   expect(await ui.find({ type: 'Box', key: 'sticky' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: '36%' })).toBeDefined()
+  // big.ts is unfolded, so none of its one foldable file is folded.
+  expect(await ui.find({ type: 'Text', text: '0/1 folded 36%' })).toBeDefined()
   // The switches ride along in it and still press.
   expect((await ui.find({ type: 'Button', key: 'sticky:view' }))?.text).toBe('side-by-side: off')
   await ui.press({ key: 'sticky:view' })
