@@ -8,7 +8,7 @@ import type { RowMeasure } from '../core/diff/layout.ts'
 import { renderHunk, renderHunkHeader } from '../core/diff/patchRenderer.ts'
 import { sideDigits, sideNumber, sideSource, splitHunk } from '../core/diff/split.ts'
 import type { SplitBlock } from '../core/diff/split.ts'
-import { codeRows, wrapWords } from '../core/diff/wrap.ts'
+import { codeRows, textWidth, wrapWords } from '../core/diff/wrap.ts'
 import { diffCache } from './state.ts'
 
 // The diff pane. Top to bottom: a head line with two switches, the
@@ -50,6 +50,30 @@ const BUDGET = 80_000
 
 /** Cells the head's text keeps beside the switches before they move under it. */
 const HEAD_ROOM = 20
+
+/** How far down the diff the window is, a whole percent, or null while the
+ * tree fits and nothing scrolls. A tree of 120 rows in a window of 20 can move
+ * 100 rows, so `scrolledPercent(120, { offset: 25, bodyRows: 20 })` is 25. */
+export function scrolledPercent(rows: number, scroll: { offset: number; bodyRows: number }): number | null {
+  const room = rows - scroll.bodyRows
+  if (room <= 0) return null
+
+  return Math.min(100, Math.max(0, Math.round((scroll.offset / room) * 100)))
+}
+
+/** The sticky row's text: the head cut to fit, then the percent at the right
+ * edge. It is padded to the full width because the row is painted over the
+ * diff, and a cell it leaves out would let the line beneath show through.
+ * `stickyRow('working tree · main', 42, 30)` is
+ * `'working tree · main        42%'`. */
+export function stickyRow(head: string, percent: number, columns: number): { head: string; percent: string } {
+  const label = `${percent}%`
+  const room = Math.max(0, columns - label.length - 1)
+  const cut = room === 0 ? '' : (wrapWords(head, room)[0] ?? '')
+  const shown = textWidth(cut) > room ? '' : cut
+
+  return { head: shown + ' '.repeat(Math.max(0, columns - label.length - textWidth(shown))), percent: label }
+}
 
 const BADGES: Record<ReviewFile['status'], string> = {
   added: 'A',
@@ -246,8 +270,10 @@ export function renderPane(
   const folded = new Set(files.filter(f => f.folded).map(f => f.id))
 
   const sections = []
+  let percent: number | null = null
   if (diff !== null) {
     const layout = layoutDiff(diff, folded, headRows.length + switchRows + statusRows.length, measureAt(columns, view))
+    percent = scrolledPercent(layout.rows, e.props.scroll)
     // The hunks near the window, in order, until the budget is spent.
     const sources = new Map<string, string>()
     let chars = 0
@@ -402,6 +428,19 @@ export function renderPane(
     </Box>
   )
 
+  // Once the head has scrolled away, one row stands in for it at the window's
+  // top: the head and how far down the diff the window is. It is laid over the
+  // diff, out of the flow, so the rows the layout counted do not move. At the
+  // top nothing is laid over, and the head with its switches shows as drawn.
+  const sticky = (row: { head: string; percent: string }) => (
+    <Box key="sticky" position="absolute" top={e.props.scroll.offset} left={0} width={columns} flexDirection="row">
+      <Text bold wrap="truncate-end">
+        {row.head}
+      </Text>
+      <Text dimColor>{row.percent}</Text>
+    </Box>
+  )
+
   return (
     <Box flexDirection="column">
       {switchesBeside ? (
@@ -424,6 +463,7 @@ export function renderPane(
       ))}
       {current.phase === 'open' && diff === null && <Text dimColor>Loading the diff…</Text>}
       {sections}
+      {percent !== null && e.props.scroll.offset > 0 && sticky(stickyRow(head, percent, columns))}
     </Box>
   )
 }
