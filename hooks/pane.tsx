@@ -51,21 +51,11 @@ const BUDGET = 80_000
 /** Cells the head's text keeps beside the switches before they move under it. */
 const HEAD_ROOM = 20
 
-/** How far down the diff the window is, a whole percent, or null while the
- * tree fits and nothing scrolls. A tree of 120 rows in a window of 20 can move
- * 100 rows, so `scrolledPercent(120, { offset: 25, bodyRows: 20 })` is 25. */
-export function scrolledPercent(rows: number, scroll: { offset: number; bodyRows: number }): number | null {
-  const room = rows - scroll.bodyRows
-  if (room <= 0) return null
-
-  return Math.min(100, Math.max(0, Math.round((scroll.offset / room) * 100)))
-}
-
 /** The sticky row's text: the head cut to fit `room` cells, then the fold
- * count and the percent after it. The head is padded so the two fill `room` exactly, because the
+ * count after it. The head is padded so the two fill `room` exactly, because the
  * row is painted over the diff, and a cell it leaves out would let the line
- * beneath show through. `stickyRow('working tree · main', '1/3 folded 42%', 40)`
- * gives head `'working tree · main       '` and label `'1/3 folded 42%'`. */
+ * beneath show through. `stickyRow('working tree · main', '1/3 folded', 40)`
+ * gives head `'working tree · main           '` and label `'1/3 folded'`. */
 export function stickyRow(head: string, label: string, room: number): { head: string; label: string } {
   const space = Math.max(0, room - label.length - 1)
   const cut = space === 0 ? '' : (wrapWords(head, space)[0] ?? '')
@@ -275,12 +265,13 @@ export function renderPane(
   const folded = new Set(files.filter(f => f.folded).map(f => f.id))
 
   const sections = []
-  let percent: number | null = null
+  // Whether the tree is taller than the window, so the head can scroll away.
+  let scrollable = false
   // Of the files that have hunks to fold, how many are folded: `1/3 folded`.
   let foldedCount = ''
   if (diff !== null) {
     const layout = layoutDiff(diff, folded, headRows.length + switchRows + statusRows.length, measureAt(columns, view))
-    percent = scrolledPercent(layout.rows, e.props.scroll)
+    scrollable = layout.rows > e.props.scroll.bodyRows
     const foldable = diff.files.filter(file => file.hunks.length > 0)
     foldedCount = `${foldable.filter(file => folded.has(file.id)).length}/${foldable.length} folded`
     // The hunks near the window, in order, until the budget is spent.
@@ -438,13 +429,12 @@ export function renderPane(
   )
 
   // Once the head has scrolled away, a sticky head stands in for it at the
-  // window's top: the head, how many files are folded, how far down the diff
-  // the window is, and the two switches, beside it or under it as in the head
+  // window's top: the head, how many files are folded, and the two switches, beside it or under it as in the head
   // proper. It is laid over the diff, out of the flow, so the rows the layout counted do not move. Every
   // cell is written, the gaps as spaces, so no line beneath shows through. At
   // the top nothing is laid over, and the head shows as drawn.
-  const sticky = (percent: number) => {
-    const label = `${foldedCount} ${percent}%`
+  const sticky = () => {
+    const label = foldedCount
     const stickyBeside = columns - switchCells - 1 - (label.length + 1) >= HEAD_ROOM
     const row = stickyRow(head, label, stickyBeside ? columns - switchCells - 1 : columns)
     const gap = (key: string) => <Text key={key}> </Text>
@@ -504,7 +494,7 @@ export function renderPane(
       ))}
       {current.phase === 'open' && diff === null && <Text dimColor>Loading the diff…</Text>}
       {sections}
-      {percent !== null && e.props.scroll.offset > 0 && sticky(percent)}
+      {scrollable && e.props.scroll.offset > 0 && sticky()}
     </Box>
   )
 }
