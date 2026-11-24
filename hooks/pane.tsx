@@ -61,18 +61,24 @@ export function scrolledPercent(rows: number, scroll: { offset: number; bodyRows
   return Math.min(100, Math.max(0, Math.round((scroll.offset / room) * 100)))
 }
 
-/** The sticky row's text: the head cut to fit, then the percent at the right
- * edge. It is padded to the full width because the row is painted over the
- * diff, and a cell it leaves out would let the line beneath show through.
- * `stickyRow('working tree · main', 42, 30)` is
- * `'working tree · main        42%'`. */
-export function stickyRow(head: string, percent: number, columns: number): { head: string; percent: string } {
+/** The sticky row's text: the head cut to fit `room` cells, then the percent
+ * after it. The head is padded so the two fill `room` exactly, because the
+ * row is painted over the diff, and a cell it leaves out would let the line
+ * beneath show through. `stickyRow('working tree · main', 42, 30)` gives
+ * head `'working tree · main        '` and percent `'42%'`. */
+export function stickyRow(head: string, percent: number, room: number): { head: string; percent: string } {
   const label = `${percent}%`
-  const room = Math.max(0, columns - label.length - 1)
-  const cut = room === 0 ? '' : (wrapWords(head, room)[0] ?? '')
-  const shown = textWidth(cut) > room ? '' : cut
+  const space = Math.max(0, room - label.length - 1)
+  const cut = space === 0 ? '' : (wrapWords(head, space)[0] ?? '')
+  const shown = textWidth(cut) > space ? '' : cut
 
-  return { head: shown + ' '.repeat(Math.max(0, columns - label.length - textWidth(shown))), percent: label }
+  return { head: shown + ' '.repeat(Math.max(0, room - label.length - textWidth(shown))), percent: label }
+}
+
+/** `text` with spaces after it to fill `width` cells, so a row laid over the
+ * diff covers it. */
+function fill(text: string, width: number): string {
+  return text + ' '.repeat(Math.max(0, width - textWidth(text)))
 }
 
 const BADGES: Record<ReviewFile['status'], string> = {
@@ -428,18 +434,50 @@ export function renderPane(
     </Box>
   )
 
-  // Once the head has scrolled away, one row stands in for it at the window's
-  // top: the head and how far down the diff the window is. It is laid over the
-  // diff, out of the flow, so the rows the layout counted do not move. At the
-  // top nothing is laid over, and the head with its switches shows as drawn.
-  const sticky = (row: { head: string; percent: string }) => (
-    <Box key="sticky" position="absolute" top={e.props.scroll.offset} left={0} width={columns} flexDirection="row">
-      <Text bold wrap="truncate-end">
-        {row.head}
-      </Text>
-      <Text dimColor>{row.percent}</Text>
-    </Box>
-  )
+  // Once the head has scrolled away, a sticky head stands in for it at the
+  // window's top: the head, how far down the diff the window is, and the two
+  // switches, beside it or under it as in the head proper. It is laid over the
+  // diff, out of the flow, so the rows the layout counted do not move. Every
+  // cell is written, the gaps as spaces, so no line beneath shows through. At
+  // the top nothing is laid over, and the head shows as drawn.
+  const sticky = (percent: number) => {
+    const percentCells = `${percent}%`.length + 1
+    const stickyBeside = columns - switchCells - 1 - percentCells >= HEAD_ROOM
+    const row = stickyRow(head, percent, stickyBeside ? columns - switchCells - 1 : columns)
+    const gap = (key: string) => <Text key={key}> </Text>
+
+    return (
+      <Box key="sticky" position="absolute" top={e.props.scroll.offset} left={0} width={columns} flexDirection="column">
+        <Box flexDirection="row">
+          <Text bold wrap="truncate-end">
+            {row.head}
+          </Text>
+          <Text dimColor>{row.percent}</Text>
+          {stickyBeside && [gap('gap:1'), stickySwitches[0], gap('gap:2'), stickySwitches[1]]}
+        </Box>
+        {!stickyBeside && switchRows <= 1 && (
+          <Box flexDirection="row">
+            {stickySwitches[0]}
+            {gap('gap:2')}
+            {stickySwitches[1]}
+            <Text>{fill('', columns - switchCells)}</Text>
+          </Box>
+        )}
+        {!stickyBeside &&
+          switchRows === 2 &&
+          [viewLabel, switchLabel].map((label, i) => (
+            <Box key={`sticky:${i}`} flexDirection="row">
+              {stickySwitches[i]}
+              <Text>{fill('', columns - label.length)}</Text>
+            </Box>
+          ))}
+      </Box>
+    )
+  }
+  const stickySwitches = [
+    <Button key="sticky:view" plain label={viewLabel} onPress={() => actions.toggleView()} />,
+    <Button key="sticky:commits" plain label={switchLabel} onPress={() => actions.toggleCommits()} />,
+  ]
 
   return (
     <Box flexDirection="column">
@@ -463,7 +501,7 @@ export function renderPane(
       ))}
       {current.phase === 'open' && diff === null && <Text dimColor>Loading the diff…</Text>}
       {sections}
-      {percent !== null && e.props.scroll.offset > 0 && sticky(stickyRow(head, percent, columns))}
+      {percent !== null && e.props.scroll.offset > 0 && sticky(percent)}
     </Box>
   )
 }

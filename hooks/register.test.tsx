@@ -198,6 +198,11 @@ test('a large file starts folded; unfolding draws the hunks near the window and 
   // 1806 rows in a window of 20 can move 1786, and 650 of them is 36%.
   expect(await ui.find({ type: 'Box', key: 'sticky' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '36%' })).toBeDefined()
+  // The switches ride along in it and still press.
+  expect((await ui.find({ type: 'Button', key: 'sticky:view' }))?.text).toBe('side-by-side: off')
+  await ui.press({ key: 'sticky:view' })
+  expect((await ui.find({ type: 'Button', key: 'sticky:view' }))?.text).toBe('side-by-side: on')
+  await ui.press({ key: 'sticky:view' })
   codes = await ui.findAll({ type: 'Code' })
   expect(codes).toHaveLength(1)
   expect(String(codes[0]?.props.source).startsWith('@@ -1000,0 +1000,600 @@')).toBe(true)
