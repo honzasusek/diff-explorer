@@ -5,6 +5,8 @@ import type { DiffFile, DiffLine, Hunk } from '../core/types.ts'
 import type { Anchor } from '../core/diff/selection.ts'
 import { renderHunkHeader } from '../core/diff/patchRenderer.ts'
 import { splitHunk } from '../core/diff/split.ts'
+import { highlightLine, isHighlighted } from '../core/diff/highlight.ts'
+import type { LineState, Piece, TokenKind } from '../core/diff/highlight.ts'
 import { fileHeader, foldLabel, headLine, plural, statusLine } from './pane.tsx'
 import type { PaneActions } from './pane.tsx'
 import { diffCache } from './state.ts'
@@ -32,6 +34,11 @@ import { diffCache } from './state.ts'
 // about the diff's own text. Side by side, a hunk's blocks (core/diff/split.ts)
 // are rows of two such Texts, so each block starts level on both sides.
 //
+// TypeScript is coloured by the mod (core/diff/highlight.ts), each keyword,
+// string, comment or number a nested Text in its colour. Those cost an
+// element each, so hunks are coloured from the top while the budget left after
+// drawing them all lasts; the rest stay plain, never left out.
+//
 // A block of text has no line to press. So picking lines is a mode: the hunk
 // named by `picking` is drawn a line per row, each with its numbers as a
 // button that presses as the terminal's gutter does. One hunk costs little.
@@ -46,6 +53,39 @@ const ELEMENT_COST = 110
 
 /** What a line costs in pick mode: its row, its button and two Texts. */
 const PICK_LINE_COST = 440
+
+/** What one coloured stretch costs: a nested Text with its colour. Measured
+ * on the test kit's tree. */
+const PIECE_COST = 70
+
+/** Colours that read on both the light and the dark theme, as the theme has
+ * no keys for code. A comment is drawn dim instead, in the theme's own way. */
+const COLOR: Record<Exclude<TokenKind, 'comment'>, string> = {
+  keyword: '#a855f7',
+  string: '#d97706',
+  number: '#0891b2',
+}
+
+/** A hunk's lines as pieces, each side's open comment or template carried
+ * from line to line: a removed line follows the old side, an added line the
+ * new side, and a context line both. */
+function piecesOf(hunk: Hunk): Piece[][] {
+  let old: LineState = 'code'
+  let neu: LineState = 'code'
+
+  return hunk.lines.map(line => {
+    const { pieces, state } = highlightLine(line.content, line.type === 'del' ? old : neu)
+    if (line.type !== 'add') old = state
+    if (line.type !== 'del') neu = state
+
+    return pieces
+  })
+}
+
+/** Coloured stretches a hunk spends: every piece that is not plain. */
+function pieceCount(pieces: Piece[][]): number {
+  return pieces.reduce((sum, line) => sum + line.filter(piece => piece.kind !== null).length, 0)
+}
 
 /** Lines in pick mode at most, half the budget: about a hundred. A longer
  * hunk is picked from past there by typing `#path:from-to`. */
@@ -90,7 +130,21 @@ const TINT: Record<DiffLine['type'], 'diffAdded' | 'diffRemoved' | undefined> = 
 /** One line as the unified block writes it: both numbers, the marker, the code.
  * An addition at new line 41 with two digits, `x`, is `'   41 +x'`. */
 export function unifiedLine(line: DiffLine, digits: number): string {
-  return `${pad(line.oldNo, digits)} ${pad(line.newNo, digits)} ${MARK[line.type]}${line.content}`
+  return unifiedPrefix(line, digits) + line.content
+}
+
+/** What the unified block writes before a line's code: both numbers and the marker. */
+function unifiedPrefix(line: DiffLine, digits: number): string {
+  return `${pad(line.oldNo, digits)} ${pad(line.newNo, digits)} ${MARK[line.type]}`
+}
+
+/** A line as a block draws it: the numbers and marker, then the code, coloured
+ * by its pieces when the hunk is coloured. */
+interface BlockLine {
+  type: DiffLine['type']
+  prefix: string
+  content: string
+  pieces?: Piece[]
 }
 
 /** One side's line in the side-by-side view: that side's number, the marker,
@@ -137,23 +191,45 @@ export function renderRichPane(
   const foldable = diff === null ? [] : diff.files.filter(file => file.hunks.length > 0)
   const foldedCount = `${foldable.filter(file => folded.has(file.id)).length}/${foldable.length} folded`
 
+  /** A piece in its colour: a nested Text, or the bare string when plain. */
+  const paint = (piece: Piece) => {
+    if (piece.kind === null) return piece.text
+    if (piece.kind === 'comment') return <Text dimColor>{piece.text}</Text>
+
+    return <Text color={COLOR[piece.kind]}>{piece.text}</Text>
+  }
+
+  /** Lines joined by newlines as a Text's children, neighbouring strings
+   * merged: `[{prefix '1 ', content 'a'}, {prefix '2 ', content 'b'}]` gives
+   * `['1 a\n2 b']`, and a coloured piece splits the string around it. */
+  const inline = (lines: BlockLine[]) => {
+    const out: Array<string | RenderElement> = []
+    const add = (child: string | RenderElement) => {
+      const last = out[out.length - 1]
+      if (typeof child === 'string' && typeof last === 'string') out[out.length - 1] = last + child
+      else if (child !== '') out.push(child)
+    }
+    lines.forEach((line, i) => {
+      if (i > 0) add('\n')
+      add(line.prefix)
+      if (line.pieces === undefined) add(line.content)
+      else line.pieces.forEach(piece => add(paint(piece)))
+    })
+
+    return out
+  }
+
   /** Lines as one Text: a context run a plain string, a changed run a
    * nested Text on its tint. The newline after a tinted run stays outside
    * it, so the tint ends with the line. */
-  const block = (lines: Array<{ type: DiffLine['type']; text: string }>, key: string) => {
-    const children = runs(lines.map(line => line.type)).flatMap((run, r) => {
-      const text = lines
-        .slice(run.from, run.to + 1)
-        .map(line => line.text)
-        .join('\n')
+  const block = (lines: BlockLine[], key: string) => {
+    const children = runs(lines.map(line => line.type)).flatMap(run => {
+      const text = inline(lines.slice(run.from, run.to + 1))
       const tail = run.to < lines.length - 1 ? ['\n'] : []
       const tint = TINT[run.type]
-      if (tint === undefined) return [text + tail.join('')]
+      if (tint === undefined) return [...text, ...tail]
 
-      return [
-        <Text backgroundColor={tint}>{text}</Text>,
-        ...tail,
-      ]
+      return [<Text backgroundColor={tint}>{text}</Text>, ...tail]
     })
 
     // The Box carries the key: a Text takes none, and a test or a scroll finds the block by it.
@@ -166,23 +242,35 @@ export function renderRichPane(
     )
   }
 
-  const unified = (hunk: Hunk, key: string) => {
+  const unified = (hunk: Hunk, key: string, pieces: Piece[][] | undefined) => {
     const digits = digitsOf(hunk)
 
     return block(
-      hunk.lines.map(line => ({ type: line.type, text: unifiedLine(line, digits) })),
+      hunk.lines.map((line, i) => ({
+        type: line.type,
+        prefix: unifiedPrefix(line, digits),
+        content: line.content,
+        pieces: pieces?.[i],
+      })),
       key,
     )
   }
 
-  const split = (hunk: Hunk, key: string) => {
+  const split = (hunk: Hunk, key: string, pieces: Piece[][] | undefined) => {
     const digits = digitsOf(hunk)
-    const side = (indexes: number[], length: number, which: 'old' | 'new') =>
+    const side = (indexes: number[], length: number, which: 'old' | 'new'): BlockLine[] =>
       Array.from({ length }, (_, i) => {
         const at = indexes[i]
         const line = at === undefined ? undefined : hunk.lines[at]
+        const text = sideLine(line, which, digits)
+        const content = line?.content ?? ''
 
-        return { type: line?.type ?? 'context', text: sideLine(line, which, digits) }
+        return {
+          type: line?.type ?? 'context',
+          prefix: text.slice(0, text.length - content.length),
+          content,
+          pieces: at === undefined ? undefined : pieces?.[at],
+        }
       })
 
     return splitHunk(hunk).map((b, n) => {
@@ -238,6 +326,35 @@ export function renderRichPane(
       diff.files.flatMap(file => file.hunks.map((hunk, i) => ({ key: `${file.id}:${i}`, hunk }))).find(x => x.key === picking)?.hunk
         .lines.length ?? 0
     let spent = Math.min(pickedLines, PICK_LIMIT) * PICK_LINE_COST + diff.files.length * 4 * ELEMENT_COST
+    const drawn = new Set<string>()
+    diff.files.forEach(file => {
+      if (folded.has(file.id)) return
+      file.hunks.forEach((hunk, index) => {
+        const key = `${file.id}:${index}`
+        const cost = key === picking ? 0 : textCost(hunk)
+        if (key !== picking && spent + cost > WIRE_BUDGET) return
+        spent += cost
+        drawn.add(key)
+      })
+    })
+    // What is left after every drawn hunk colours TypeScript hunks from the
+    // top; the first that does not fit ends the colouring, so it never skips about.
+    const coloured = new Map<string, Piece[][]>()
+    let colouring = true
+    diff.files.forEach(file => {
+      if (!isHighlighted(file.path)) return
+      file.hunks.forEach((hunk, index) => {
+        const key = `${file.id}:${index}`
+        if (!colouring || key === picking || !drawn.has(key)) return
+        const pieces = piecesOf(hunk)
+        const cost = pieceCount(pieces) * PIECE_COST
+        if (spent + cost > WIRE_BUDGET) colouring = false
+        else {
+          spent += cost
+          coloured.set(key, pieces)
+        }
+      })
+    })
     diff.files.forEach((file, f) => {
       const isFolded = folded.has(file.id)
       const rows: RenderElement[] = []
@@ -245,16 +362,14 @@ export function renderRichPane(
         file.hunks.forEach((hunk, index) => {
           const key = `${file.id}:${index}`
           const isPicking = key === picking
-          const cost = isPicking ? 0 : textCost(hunk)
-          const drawn = isPicking || spent + cost <= WIRE_BUDGET
-          if (drawn) spent += cost
+          const isDrawn = drawn.has(key)
           const header = renderHunkHeader(hunk)
           rows.push(
             <Box key={`h${f}.${index}`} flexDirection="column" marginTop={1}>
               <Box flexDirection="row" gap={2}>
                 <Box flexGrow={1} flexShrink={1}>
                   <Text mono dimColor>
-                    {drawn
+                    {isDrawn
                       ? header
                       : `${header} · ${plural(hunk.lines.length, 'line')} not drawn: the app takes 100,000 characters at once, so fold a file to make room`}
                   </Text>
@@ -272,7 +387,9 @@ export function renderRichPane(
               {isPicking && hunk.lines.length > PICK_LIMIT && (
                 <Text dimColor>{`${plural(hunk.lines.length - PICK_LIMIT, 'more line')}: type #${file.path}:from-to in the prompt to pick past here`}</Text>
               )}
-              {!isPicking && drawn && (view === 'split' ? split(hunk, `t${f}.${index}`) : unified(hunk, `t${f}.${index}`))}
+              {!isPicking &&
+                isDrawn &&
+                (view === 'split' ? split(hunk, `t${f}.${index}`, coloured.get(key)) : unified(hunk, `t${f}.${index}`, coloured.get(key)))}
             </Box>,
           )
         })
