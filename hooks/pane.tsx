@@ -46,7 +46,7 @@ export interface PaneActions {
 
 /** Hunk text one drawing may hold. The engine cuts a drawing at 100,000
  * characters; the rest of the tree is small, so this leaves room. */
-const BUDGET = 80_000
+export const BUDGET = 80_000
 
 /** Cells the head's text keeps beside the switches before they move under it. */
 const HEAD_ROOM = 20
@@ -86,14 +86,24 @@ function counts(f: { binary: boolean; additions: number; deletions: number }): s
   return f.binary ? 'binary' : `+${f.additions} −${f.deletions}`
 }
 
-function fileHeader(f: DiffFile): string {
+export function fileHeader(f: DiffFile): string {
   const from = f.oldPath !== null && f.oldPath !== f.path ? ` ← ${f.oldPath}` : ''
   const note = f.truncated === true ? ' · too large to draw' : ''
 
   return `${BADGES[f.status]} ${f.path}${from}  ${counts(f)}${note}${f.dirty === true ? ' ●' : ''}`
 }
 
-function statusLine(current: Review): string {
+/** The head's text: the target, then its head and base, as
+ * `#412 · fix-retry → main`. */
+export function headLine(current: Review): string {
+  const info = current.info
+
+  return info === null
+    ? current.label
+    : `${current.label} · ${info.headRefName ?? info.headSha.slice(0, 7)} → ${info.baseRefName ?? info.baseRef}`
+}
+
+export function statusLine(current: Review): string {
   if (current.phase === 'opening') return 'Opening…'
   if (current.phase === 'failed') return `Error: ${current.error ?? 'unknown'}`
   const summary = `${plural((current.files ?? []).length, 'file')} · +${current.additions} −${current.deletions}`
@@ -126,7 +136,7 @@ function beside(...labels: string[]): number {
   return labels.reduce((cells, label) => cells + label.length + 1, 0)
 }
 
-const foldLabel = (folded: boolean) => (folded ? 'unfold' : 'fold')
+export const foldLabel = (folded: boolean) => (folded ? 'unfold' : 'fold')
 
 /** The cells left for a file header's text beside its buttons. */
 function fileHeaderRoom(file: DiffFile, folded: boolean, columns: number): number {
@@ -247,10 +257,7 @@ export function renderPane(
   const info = current.info
   const files = current.files ?? []
   const columns = e.props.bodyColumns
-  const head =
-    info === null
-      ? current.label
-      : `${current.label} · ${info.headRefName ?? info.headSha.slice(0, 7)} → ${info.baseRefName ?? info.baseRef}`
+  const head = headLine(current)
   const switchLabel = `auto-commit: ${current.commits ? 'on' : 'off'}`
   const viewLabel = `side-by-side: ${view === 'split' ? 'on' : 'off'}`
   // The switches sit beside the head while it keeps HEAD_ROOM cells; in a

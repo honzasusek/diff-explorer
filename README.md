@@ -11,6 +11,8 @@ A Claude Code mod that opens a pull request's or a branch's diff in a pane besid
 - The pane's head row has an `auto-commit` switch. Off, a `git commit` Claude runs is refused with the reason. It starts off for a pull request, whose branch is someone else's, and on for your own tree or branch, and is remembered per repository. Pushing and opening pull requests are never allowed unasked, whatever the switch says.
 - Beside it, `side-by-side` draws each hunk with the old file on the left and the new on the right, every change level with what it replaced. The choice is remembered for every repository and session.
 
+- In the desktop app the pane draws each diff line as a row, its line numbers beside its text, so the numbers stay level with the code and a range is still picked with two presses. It gives up the syntax colours to do so: lines are tinted only as added or removed.
+
 Everything the mod knows lives in `core/`, plain TypeScript with no dependency on the engine, Node or a UI; `hooks/` wires it to Claude Code's events and draws the pane.
 
 ## Install

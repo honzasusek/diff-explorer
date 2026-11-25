@@ -23,6 +23,7 @@ import type { BandActions } from './band.tsx'
 import { runAdd, runRef, runRefs, runRevert } from './commands.ts'
 import type { Outcome } from './commands.ts'
 import { plural, renderPane } from './pane.tsx'
+import { renderRichPane } from './paneRich.tsx'
 import type { PaneActions } from './pane.tsx'
 import { engineRunner } from './runner.ts'
 import { PANE, diffCache } from './state.ts'
@@ -590,9 +591,14 @@ export const register: Register = (on, options) => {
     return { sections: [...below.sections, { id: SECTION_ID, text: reviewSection(summary), scope: 'session' }] }
   })
 
-  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) =>
-    renderPane($, e, await read($, review), await read($, anchor), paneActions($), await read($, view)),
-  )
+  // The terminal draws in character rows, which pane.tsx counts; every other
+  // surface draws in pixels, where paneRich.tsx gives each diff line a row.
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    const [current, mark, shown] = [await read($, review), await read($, anchor), await read($, view)]
+    if (e.surface === 'terminal') return renderPane($, e, current, mark, paneActions($), shown)
+
+    return renderRichPane($, e, current, mark, paneActions($), shown)
+  })
 
   // Typeahead for a #path:from-to token: the diff's paths, then one file's hunks.
   on('prompt.autocomplete', { token: /^#/ }, async ($, e, next) => {

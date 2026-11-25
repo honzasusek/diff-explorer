@@ -91,7 +91,7 @@ test('/explore . opens the working tree and the pane shows its files', async ($,
   const ran = await $.command.run({ ...RUN, command: 'explore', args: '.' })
   expect(ran.text).toBe('Opened working tree: 1 file, +2 −1 against origin/HEAD.')
 
-  for (const surface of ['terminal', 'desktop'] as const) {
+  for (const surface of ['terminal'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
     expect(await ui.find({ type: 'Text', text: /working tree/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /^M src\/client\.ts\s+\+2 −1$/ })).toBeDefined()
@@ -324,6 +324,41 @@ test('the pane adds a hunk, a file, and a gutter range on the second press', asy
 
   await ui.press({ key: 'hunk+:src-payments-client-ts:1' })
   expect(toasts[3]).toBe('client.ts:81-83 is already in the refs')
+  await ui.unmount()
+})
+
+test('the desktop draws every diff line as a row: its numbers beside its text, picking a range as the gutter does', async ($, on) => {
+  const toasts: string[] = []
+  await openSample($, on, { toasts })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  // No Code card: its padding and header would leave a gutter beside it out of line.
+  expect(await ui.findAll({ type: 'Code' })).toHaveLength(0)
+  expect(await ui.find({ type: 'Text', text: /^working tree/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '0/4 folded' })).toBeDefined()
+
+  // client.ts hunk 0, by row: context 40/40, -41, +41, +42, context 42/43.
+  const gutter = async (row: number) => (await ui.find({ key: `line:src-payments-client-ts:0:${row}` }))?.text
+  expect(await gutter(0)).toBe(' 40 40 ')
+  expect(await gutter(1)).toBe(' 41    ')
+  expect(await gutter(3)).toBe('    42 ')
+  expect(await ui.find({ type: 'Text', text: '+    return retry(() => charge(url, opts));' })).toBeDefined()
+  expect((await ui.find({ type: 'Text', text: '-  if (!res.ok) throw new Error(res.status);' }))?.props.backgroundColor).toBe('diffRemoved')
+
+  await ui.press({ key: 'line:src-payments-client-ts:0:3' })
+  expect(await gutter(3)).toBe('▸   42 ')
+  await ui.press({ key: 'line:src-payments-client-ts:0:2' })
+  expect(toasts).toEqual(['Added client.ts:41-42 to the refs'])
+
+  // Side by side, a row holds the old line and the new one: the deletion
+  // beside the first addition, a blank half beside the second.
+  await ui.press({ key: 'view' })
+  expect(await ui.findAll({ type: 'Code' })).toHaveLength(0)
+  expect((await ui.find({ key: 'line:old:src-payments-client-ts:0:1' }))?.text).toBe(' 41 ')
+  expect((await ui.find({ key: 'line:new:src-payments-client-ts:0:2' }))?.text).toBe(' 41 ')
+  expect(await ui.find({ key: 'pair:src-payments-client-ts:0:1:1' })).toBeDefined()
+  expect(await ui.find({ key: 'line:old:src-payments-client-ts:0:4' })).toBeDefined()
+  expect((await ui.find({ key: 'line:new:src-payments-client-ts:0:4' }))?.text).toBe(' 43 ')
+  await ui.press({ key: 'view' })
   await ui.unmount()
 })
 
@@ -705,7 +740,7 @@ test('a narrow pane wraps long lines: each gutter button is as tall as its line,
   // 30 columns: the client.ts hunk's numbers have 2 digits, so its gutter is
   // 3 cells, the engine's prefix 5 and the code 22.
   const narrow = { ...PANE.props, bodyColumns: 30 }
-  for (const surface of ['terminal', 'desktop'] as const) {
+  for (const surface of ['terminal'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface, props: narrow })
     expect((await ui.find({ type: 'Code' }))?.props.wrap).toBe('wrap')
     // '    return retry(() => charge(url, opts));' is 42 cells: two rows.
