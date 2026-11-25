@@ -337,28 +337,73 @@ test('the desktop draws every diff line as a row: its numbers beside its text, p
   expect(await ui.find({ type: 'Text', text: '0/4 folded' })).toBeDefined()
 
   // client.ts hunk 0, by row: context 40/40, -41, +41, +42, context 42/43.
-  const gutter = async (row: number) => (await ui.find({ key: `line:src-payments-client-ts:0:${row}` }))?.text
+  const gutter = async (row: number) => (await ui.find({ key: `g2.0.${row}` }))?.text
   expect(await gutter(0)).toBe(' 40 40 ')
   expect(await gutter(1)).toBe(' 41    ')
   expect(await gutter(3)).toBe('    42 ')
   expect(await ui.find({ type: 'Text', text: '+    return retry(() => charge(url, opts));' })).toBeDefined()
-  expect((await ui.find({ type: 'Text', text: '-  if (!res.ok) throw new Error(res.status);' }))?.props.backgroundColor).toBe('diffRemoved')
+  expect(await ui.find({ type: 'Text', text: '-  if (!res.ok) throw new Error(res.status);' })).toBeDefined()
+  expect((await ui.find({ key: 'r2.0.1' }))?.props.backgroundColor).toBe('diffRemoved')
 
-  await ui.press({ key: 'line:src-payments-client-ts:0:3' })
+  await ui.press({ key: 'g2.0.3' })
   expect(await gutter(3)).toBe('▸   42 ')
-  await ui.press({ key: 'line:src-payments-client-ts:0:2' })
+  await ui.press({ key: 'g2.0.2' })
   expect(toasts).toEqual(['Added client.ts:41-42 to the refs'])
 
   // Side by side, a row holds the old line and the new one: the deletion
   // beside the first addition, a blank half beside the second.
   await ui.press({ key: 'view' })
   expect(await ui.findAll({ type: 'Code' })).toHaveLength(0)
-  expect((await ui.find({ key: 'line:old:src-payments-client-ts:0:1' }))?.text).toBe(' 41 ')
-  expect((await ui.find({ key: 'line:new:src-payments-client-ts:0:2' }))?.text).toBe(' 41 ')
-  expect(await ui.find({ key: 'pair:src-payments-client-ts:0:1:1' })).toBeDefined()
-  expect(await ui.find({ key: 'line:old:src-payments-client-ts:0:4' })).toBeDefined()
-  expect((await ui.find({ key: 'line:new:src-payments-client-ts:0:4' }))?.text).toBe(' 43 ')
+  expect((await ui.find({ key: 'go2.0.1' }))?.text).toBe(' 41 ')
+  expect((await ui.find({ key: 'gn2.0.2' }))?.text).toBe(' 41 ')
+  expect(await ui.find({ key: 'p2.0.1.1' })).toBeDefined()
+  expect(await ui.find({ key: 'go2.0.4' })).toBeDefined()
+  expect((await ui.find({ key: 'gn2.0.4' }))?.text).toBe(' 43 ')
   await ui.press({ key: 'view' })
+  await ui.unmount()
+})
+
+/** A drawing's size as the app receives it: its JSON without the kit's own
+ * `text` summaries, and its elements. The app refuses one over 100,000
+ * characters or 20,000 elements and keeps its last drawing instead. */
+function wireSize(root: unknown): { chars: number; nodes: number } {
+  let nodes = 0
+  const json = JSON.stringify(root, (key, value) => {
+    if (key === 'text') return undefined
+    if (value !== null && typeof value === 'object' && 'type' in value) nodes += 1
+
+    return value
+  })
+
+  return { chars: json.length, nodes }
+}
+
+test('the desktop drawing of a large diff stays under the app\'s cap, and draws on from where asked', async ($, on) => {
+  await openBig($, on)
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  await ui.press({ key: 'fold:big-ts' })
+  const size = async () => wireSize((await ui.findAll({ type: 'Box' }))[0])
+  const first = await size()
+  expect(first.chars).toBeLessThan(100_000)
+  expect(first.nodes).toBeLessThan(20_000)
+
+  // The first hunk is cut where the budget ends; the rest stands as rows.
+  const cut = await ui.find({ type: 'Text', text: /^\d+ lines not drawn$/ })
+  expect(cut).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '2 hunks, 1200 lines, not drawn' })).toBeDefined()
+  const drawn = 600 - Number(String(cut?.text).split(' ')[0])
+  expect(await ui.find({ key: `g0.0.${drawn - 1}` })).toBeDefined()
+  expect(await ui.find({ key: `g0.0.${drawn}` })).toBeUndefined()
+
+  // Drawing on from the cut starts there; what came before is a row too.
+  await ui.press({ key: `from:big-ts:0:${drawn}` })
+  expect(await ui.find({ key: `g0.0.${drawn}` })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: `${drawn} lines not drawn` })).toBeDefined()
+  expect((await size()).chars).toBeLessThan(100_000)
+
+  // The hunks after it are reachable the same way, and the top again.
+  await ui.press({ key: 'from:big-ts:0:0' })
+  expect(await ui.find({ key: 'g0.0.0' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -818,3 +863,5 @@ test('+file on a changed file adds the whole file, unchanged lines included', as
   expect(sent.text).toContain('lines="1-5"')
   expect(sent.text).toContain("import { fetch } from './net';")
 })
+
+

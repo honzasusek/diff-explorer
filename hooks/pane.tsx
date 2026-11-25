@@ -42,6 +42,8 @@ export interface PaneActions {
   toggleCommits(): void
   /** The head row's other switch: unified or side by side. */
   toggleView(): void
+  /** The desktop pane's start: draw from this hunk key, or from the top. */
+  drawFrom(key: string | null): void
 }
 
 /** Hunk text one drawing may hold. The engine cuts a drawing at 100,000
