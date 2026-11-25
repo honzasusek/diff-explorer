@@ -355,12 +355,16 @@ test('the desktop draws each hunk as one text block with its numbers, and picks 
   const runs = ((hunk as unknown as Node).children?.[0] as Node).children ?? []
   const tints = runs.flatMap(run => (typeof run === 'string' || run.props?.backgroundColor === undefined ? [] : [[run.props.backgroundColor, flat(run)]]))
   expect(tints).toEqual([
-    ['diffRemoved', '41    -  if (!res.ok) throw new Error(res.status);'],
-    ['diffAdded', '   41 +  if (!res.ok && retryable(res)) {\n   42 +    return retry(() => charge(url, opts));'],
+    ['rgb(255, 206, 203)', '41    -  if (!res.ok) throw new Error(res.status);'],
+    ['rgb(218, 251, 225)', '   41 +  if (!res.ok && retryable(res)) {\n   42 +    return retry(() => charge(url, opts));'],
   ])
   const spans = (nodes: Array<Node | string>): Array<[string | undefined, string]> =>
     nodes.flatMap(node =>
-      typeof node === 'string' ? [] : node.props?.color !== undefined ? [[node.props.color, flat(node)]] : spans(node.children ?? []),
+      typeof node === 'string'
+        ? []
+        : node.props?.color !== undefined && node.props.backgroundColor === undefined
+          ? [[node.props.color, flat(node)]]
+          : spans(node.children ?? []),
     )
   expect(spans(runs)).toEqual([
     ['#a855f7', 'const'],
@@ -420,7 +424,7 @@ test('the desktop draws a large diff whole, under the app\'s cap', async ($, on)
   expect(await ui.find({ type: 'Text', text: /not drawn/ })).toBeUndefined()
   // Colours spend what is left: the first hunk's 600 numbers fit, the second's
   // would pass the cap, so it and the third stay plain.
-  const colours = async (index: number) => JSON.stringify(await ui.find({ key: `t0.${index}` })).split('"color":"#').length - 1
+  const colours = async (index: number) => (JSON.stringify(await ui.find({ key: `t0.${index}` })).match(/"color":"#(?!1f2328)/g) ?? []).length
   expect([await colours(0), await colours(1), await colours(2)]).toEqual([600, 0, 0])
 
   // Picking from a 600-line hunk draws its first lines as rows and says how to reach the rest.

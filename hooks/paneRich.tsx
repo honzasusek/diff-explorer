@@ -121,11 +121,18 @@ function pad(number: number | null, digits: number): string {
 }
 
 const MARK: Record<DiffLine['type'], string> = { add: '+', del: '-', context: ' ' }
-const TINT: Record<DiffLine['type'], 'diffAdded' | 'diffRemoved' | undefined> = {
-  add: 'diffAdded',
-  del: 'diffRemoved',
+/** The backgrounds of changed lines: GitHub's light green and red. They are
+ * paler than the theme's diffAdded and diffRemoved, so the syntax colours on
+ * them stand out. */
+const TINT: Record<DiffLine['type'], string | undefined> = {
+  add: 'rgb(218, 251, 225)',
+  del: 'rgb(255, 206, 203)',
   context: undefined,
 }
+
+/** The text colour on a tint: GitHub's dark ink. The tints are light whatever
+ * the theme, so a dark theme's light text would barely show on them. */
+const INK = '#1f2328'
 
 /** One line as the unified block writes it: both numbers, the marker, the code.
  * An addition at new line 41 with two digits, `x`, is `'   41 +x'`. */
@@ -229,7 +236,12 @@ export function renderRichPane(
       const tint = TINT[run.type]
       if (tint === undefined) return [...text, ...tail]
 
-      return [<Text backgroundColor={tint}>{text}</Text>, ...tail]
+      return [
+        <Text backgroundColor={tint} color={INK}>
+          {text}
+        </Text>,
+        ...tail,
+      ]
     })
 
     // The Box carries the key: a Text takes none, and a test or a scroll finds the block by it.
@@ -307,11 +319,11 @@ export function renderRichPane(
             if (anchoredRow !== -1) actions.pick(null)
           }}
         >
-          <Text mono tabular>
+          <Text mono tabular color={TINT[line.type] === undefined ? undefined : INK}>
             {`${row === anchoredRow ? '▸' : ' '}${pad(line.oldNo, digits)} ${pad(line.newNo, digits)} `}
           </Text>
         </Button>
-        <Text mono wrap="wrap">
+        <Text mono wrap="wrap" color={TINT[line.type] === undefined ? undefined : INK}>
           {`${MARK[line.type]}${line.content}`}
         </Text>
       </Box>
