@@ -327,7 +327,7 @@ test('the pane adds a hunk, a file, and a gutter range on the second press', asy
   await ui.unmount()
 })
 
-test('the desktop draws every diff line as a row: its numbers beside its text, picking a range as the gutter does', async ($, on) => {
+test('the desktop draws each hunk as one text block with its numbers, and picks lines in a mode', async ($, on) => {
   const toasts: string[] = []
   await openSample($, on, { toasts })
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
@@ -336,29 +336,44 @@ test('the desktop draws every diff line as a row: its numbers beside its text, p
   expect(await ui.find({ type: 'Text', text: /^working tree/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '0/4 folded' })).toBeDefined()
 
-  // client.ts hunk 0, by row: context 40/40, -41, +41, +42, context 42/43.
-  const gutter = async (row: number) => (await ui.find({ key: `g2.0.${row}` }))?.text
-  expect(await gutter(0)).toBe(' 40 40 ')
-  expect(await gutter(1)).toBe(' 41    ')
+  // client.ts hunk 0 (file 2): context 40/40, -41, +41, +42, context 42/43,
+  // the numbers written into the lines, the changed runs on their tints.
+  const hunk = await ui.find({ key: 't2.0' })
+  expect(hunk?.text).toBe(
+    [
+      '40 40    const res = await fetch(url, opts);',
+      '41    -  if (!res.ok) throw new Error(res.status);',
+      '   41 +  if (!res.ok && retryable(res)) {',
+      '   42 +    return retry(() => charge(url, opts));',
+      '42 43    return res.json();',
+    ].join('\n'),
+  )
+  // The changed runs are nested Texts on their tints, which the kit's find does not reach.
+  type Node = { props?: { backgroundColor?: string }; children?: Array<Node | string> }
+  const runs = ((hunk as unknown as Node).children?.[0] as Node).children ?? []
+  const tints = runs.flatMap(run => (typeof run === 'string' ? [] : [[run.props?.backgroundColor, run.children?.[0]]]))
+  expect(tints).toEqual([
+    ['diffRemoved', '41    -  if (!res.ok) throw new Error(res.status);'],
+    ['diffAdded', '   41 +  if (!res.ok && retryable(res)) {\n   42 +    return retry(() => charge(url, opts));'],
+  ])
+
+  // Pick mode draws that hunk a line per row; two presses add the range and end it.
+  await ui.press({ key: 'pick:src-payments-client-ts:0' })
+  expect(await ui.find({ key: 't2.0' })).toBeUndefined()
+  const gutter = async (row: number) => (await ui.find({ key: `pick:src-payments-client-ts:0:${row}` }))?.text
   expect(await gutter(3)).toBe('    42 ')
-  expect(await ui.find({ type: 'Text', text: '+    return retry(() => charge(url, opts));' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: '-  if (!res.ok) throw new Error(res.status);' })).toBeDefined()
-  expect((await ui.find({ key: 'r2.0.1' }))?.props.backgroundColor).toBe('diffRemoved')
-
-  await ui.press({ key: 'g2.0.3' })
+  await ui.press({ key: 'pick:src-payments-client-ts:0:3' })
   expect(await gutter(3)).toBe('▸   42 ')
-  await ui.press({ key: 'g2.0.2' })
+  await ui.press({ key: 'pick:src-payments-client-ts:0:2' })
   expect(toasts).toEqual(['Added client.ts:41-42 to the refs'])
+  expect(await ui.find({ key: 't2.0' })).toBeDefined()
 
-  // Side by side, a row holds the old line and the new one: the deletion
-  // beside the first addition, a blank half beside the second.
+  // Side by side, each block is a row of two blocks: the deletion beside the
+  // two additions, the shorter side padded.
   await ui.press({ key: 'view' })
-  expect(await ui.findAll({ type: 'Code' })).toHaveLength(0)
-  expect((await ui.find({ key: 'go2.0.1' }))?.text).toBe(' 41 ')
-  expect((await ui.find({ key: 'gn2.0.2' }))?.text).toBe(' 41 ')
-  expect(await ui.find({ key: 'p2.0.1.1' })).toBeDefined()
-  expect(await ui.find({ key: 'go2.0.4' })).toBeDefined()
-  expect((await ui.find({ key: 'gn2.0.4' }))?.text).toBe(' 43 ')
+  expect((await ui.find({ key: 't2.0.o1' }))?.text).toBe('41 -  if (!res.ok) throw new Error(res.status);\n ')
+  expect((await ui.find({ key: 't2.0.n1' }))?.text).toBe('41 +  if (!res.ok && retryable(res)) {\n42 +    return retry(() => charge(url, opts));')
+  expect((await ui.find({ key: 't2.0.n2' }))?.text).toBe('43    return res.json();')
   await ui.press({ key: 'view' })
   await ui.unmount()
 })
@@ -378,32 +393,22 @@ function wireSize(root: unknown): { chars: number; nodes: number } {
   return { chars: json.length, nodes }
 }
 
-test('the desktop drawing of a large diff stays under the app\'s cap, and draws on from where asked', async ($, on) => {
+test('the desktop draws a large diff whole, under the app\'s cap', async ($, on) => {
   await openBig($, on)
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   await ui.press({ key: 'fold:big-ts' })
-  const size = async () => wireSize((await ui.findAll({ type: 'Box' }))[0])
-  const first = await size()
-  expect(first.chars).toBeLessThan(100_000)
-  expect(first.nodes).toBeLessThan(20_000)
+  const size = wireSize((await ui.findAll({ type: 'Box' }))[0])
+  expect(size.chars).toBeLessThan(100_000)
+  expect(size.nodes).toBeLessThan(20_000)
+  // All three hunks of 600 lines are drawn, none left out.
+  for (const index of [0, 1, 2]) expect(await ui.find({ key: `t0.${index}` })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /not drawn/ })).toBeUndefined()
 
-  // The first hunk is cut where the budget ends; the rest stands as rows.
-  const cut = await ui.find({ type: 'Text', text: /^\d+ lines not drawn$/ })
-  expect(cut).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: '2 hunks, 1200 lines, not drawn' })).toBeDefined()
-  const drawn = 600 - Number(String(cut?.text).split(' ')[0])
-  expect(await ui.find({ key: `g0.0.${drawn - 1}` })).toBeDefined()
-  expect(await ui.find({ key: `g0.0.${drawn}` })).toBeUndefined()
-
-  // Drawing on from the cut starts there; what came before is a row too.
-  await ui.press({ key: `from:big-ts:0:${drawn}` })
-  expect(await ui.find({ key: `g0.0.${drawn}` })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: `${drawn} lines not drawn` })).toBeDefined()
-  expect((await size()).chars).toBeLessThan(100_000)
-
-  // The hunks after it are reachable the same way, and the top again.
-  await ui.press({ key: 'from:big-ts:0:0' })
-  expect(await ui.find({ key: 'g0.0.0' })).toBeDefined()
+  // Picking from a 600-line hunk draws its first lines as rows and says how to reach the rest.
+  await ui.press({ key: 'pick:big-ts:0' })
+  expect(await ui.find({ key: 'pick:big-ts:0:0' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /more lines: type #big\.ts:from-to/ })).toBeDefined()
+  expect(wireSize((await ui.findAll({ type: 'Box' }))[0]).chars).toBeLessThan(100_000)
   await ui.unmount()
 })
 

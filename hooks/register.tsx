@@ -40,10 +40,11 @@ const basket = atom({ plugin: 'diff-explorer', key: 'basket' } as const, [], { s
 const anchor = atom({ plugin: 'diff-explorer', key: 'anchor' } as const, null, { shape: 'anchor-1' })
 /** How the pane draws hunks: one column, or the old side beside the new. */
 const view = atom({ plugin: 'diff-explorer', key: 'view' } as const, 'unified', { shape: 'view-1' })
-/** Where the desktop pane starts drawing: a hunk's key, `src-a-ts:2`, or null
- * for the top. A drawing there has a size cap the whole diff may pass, so a
- * press on a hunk it left out starts the drawing at that hunk. */
-const drawFrom = atom({ plugin: 'diff-explorer', key: 'drawFrom' } as const, null, { shape: 'drawFrom-1' })
+/** The hunk the desktop pane draws for picking lines, `src-a-ts:2`, or null.
+ * The desktop draws a hunk as one block of text, which fits a whole diff in
+ * one drawing but has no line to press; the hunk named here is drawn a line
+ * per row instead, each with its numbers as a button. */
+const picking = atom({ plugin: 'diff-explorer', key: 'picking' } as const, null, { shape: 'picking-1' })
 
 /** Body columns to ask the dock for; the engine caps a dock at 45% of the terminal. */
 const PANE_COLUMNS = 80
@@ -294,7 +295,7 @@ function paneActions($: EngineInterface): PaneActions {
     toggleView: () => void toggleView($).catch(log('view switch')),
     addHunk: (file: DiffFile, index: number) => void addCaptured($, captureHunk(file, index)).catch(log('+hunk')),
     addFile: (file: DiffFile) => void addWholeFile($, file).catch(log('+file')),
-    drawFrom: (key: string | null) => void update($, drawFrom, () => key).catch(log('draw from')),
+    pick: (key: string | null) => void update($, picking, () => key).catch(log('pick lines')),
   }
 }
 
@@ -602,7 +603,7 @@ export const register: Register = (on, options) => {
     const [current, mark, shown] = [await read($, review), await read($, anchor), await read($, view)]
     if (e.surface === 'terminal') return renderPane($, e, current, mark, paneActions($), shown)
 
-    return renderRichPane($, e, current, mark, paneActions($), shown, await read($, drawFrom))
+    return renderRichPane($, e, current, mark, paneActions($), shown, await read($, picking))
   })
 
   // Typeahead for a #path:from-to token: the diff's paths, then one file's hunks.

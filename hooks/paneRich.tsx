@@ -16,85 +16,58 @@ import { diffCache } from './state.ts'
 // its diff Code is a card with a header and padding of its own, so a gutter
 // beside it never lines up.
 //
-// Here every diff line is one row instead: its line numbers, a button that
-// picks it as the gutter does, beside the line's text in the monospaced face,
-// tinted as added or removed. Number and text share a row, so they stay level
-// however the line wraps. Side by side, a row holds the old line and the new
-// one, so the two sides stay level too. The price is the syntax colours,
-// which only the engine's Code draws.
+// A drawing reaches the app as JSON, refused over 100,000 characters or
+// 20,000 elements; the app then keeps its last drawing (0.2.4 stayed on
+// "Opening..."). An element costs about 100 characters whatever it holds, so
+// a row per line spends the cap on structure. Instead each hunk is one Text
+// in the monospaced face, its numbers written into each line, so they stay
+// level with the code however a line wraps:
 //
-// A drawing travels to the app as JSON, capped at 100,000 characters and
-// 20,000 elements; over either, the app keeps its last drawing (it showed
-// "Opening..." for good). A diff line costs its text and about LINE_COST
-// characters of elements and props, so the lines are drawn from the start
-// line on until lineBudget is spent, cutting a hunk where the budget ends.
-// What is left out, before or after, is one row per stretch with a button
-// that starts the drawing there. The start is a line, `src-a-ts:2:40` (file,
-// hunk, line), since one lockfile hunk alone can pass the cap.
-// there. Keys are kept short for the same reason: `g3.1.4` is the gutter of
-// file 3, hunk 1, line 4.
+//   40 40  const res = await fetch(url, opts);
+//   41    -if (!res.ok) throw new Error(res.status);
+//      41 +if (!res.ok && retryable(res)) {
+//
+// Lines of one kind in a row are one run: context runs are plain strings, an
+// added or removed run one nested Text on its tint. The drawing then costs
+// about the diff's own text. Side by side, a hunk's blocks (core/diff/split.ts)
+// are rows of two such Texts, so each block starts level on both sides.
+//
+// A block of text has no line to press. So picking lines is a mode: the hunk
+// named by `picking` is drawn a line per row, each with its numbers as a
+// button that presses as the terminal's gutter does. One hunk costs little.
 
-/** What a drawn diff line costs on the wire beyond its text: the row, its
- * gutter Button and the two Texts, with their props and keys. A line of the
- * test kit's tree measured 420 (hooks/register.test.tsx, the desktop size
- * test), so this keeps a little room. */
-const LINE_COST = 440
-
-/** What a file costs beyond its lines: its header row, its buttons, and a
- * row for hunks left out. */
-const FILE_COST = 700
-
-/** Characters a drawing may spend, below the app's cap of 100,000 for the
- * head, the status and anything the estimate misses. */
+/** Characters the drawing may spend, below the app's cap of 100,000 for the
+ * head and anything the estimate misses. */
 const WIRE_BUDGET = 92_000
 
-/** The budget for diff lines once the files' own rows are paid for:
- * `lineBudget(15)` is 81,500. At least 20,000, so a diff of many files still
- * draws some lines. */
-export function lineBudget(files: number): number {
-  return Math.max(20_000, WIRE_BUDGET - files * FILE_COST)
+/** What an element costs on the wire beyond its text, with its props: a run's
+ * nested Text, a hunk's Box or a header row. Measured on the test kit's tree. */
+const ELEMENT_COST = 110
+
+/** What a line costs in pick mode: its row, its button and two Texts. */
+const PICK_LINE_COST = 440
+
+/** Lines in pick mode at most, half the budget: about a hundred. A longer
+ * hunk is picked from past there by typing `#path:from-to`. */
+const PICK_LIMIT = Math.floor(WIRE_BUDGET / 2 / PICK_LINE_COST)
+
+interface Run {
+  type: DiffLine['type']
+  from: number
+  to: number
 }
 
-/** The lines of one hunk drawn: from `start` up to, not including, `end`. */
-export interface DrawnRange {
-  start: number
-  end: number
-}
+/** Lines of one kind in a row, each run its kind and first and last index:
+ * kinds `context, context, del` give `[{context 0-1}, {del 2-2}]`. */
+export function runs(types: readonly DiffLine['type'][]): Run[] {
+  const out: Run[] = []
+  types.forEach((type, i) => {
+    const last = out[out.length - 1]
+    if (last !== undefined && last.type === type) last.to = i
+    else out.push({ type, from: i, to: i })
+  })
 
-/** The lines drawn, per hunk key (`src-a-ts:2`): from the line keyed `from`
- * (`src-a-ts:2:40`; the top when null or gone) on, in order, each line
- * costing its text and LINE_COST, until `budget` is spent; folded files
- * are passed over. At least one line, however long. With a budget of three
- * 10-character lines and hunks of 2 and 4, from the top: hunk 0 lines 0-2,
- * hunk 1 line 0 only. */
-export function drawnRanges(
-  files: readonly DiffFile[],
-  folded: ReadonlySet<string>,
-  from: string | null,
-  budget: number,
-): Map<string, DrawnRange> {
-  const order = files.flatMap(file => (folded.has(file.id) ? [] : file.hunks.map((hunk, i) => ({ key: `${file.id}:${i}`, hunk }))))
-  const [fromHunk, fromLine] =
-    from === null ? [null, 0] : [from.slice(0, from.lastIndexOf(':')), Number(from.slice(from.lastIndexOf(':') + 1))]
-  const found = order.findIndex(entry => entry.key === fromHunk)
-  const drawn = new Map<string, DrawnRange>()
-  let spent = 0
-  let lines = 0
-  for (const [n, entry] of order.slice(Math.max(0, found)).entries()) {
-    const first = n === 0 && found >= 0 ? Math.min(Math.max(0, fromLine || 0), entry.hunk.lines.length) : 0
-    let end = first
-    for (const line of entry.hunk.lines.slice(first)) {
-      const next = line.content.length + LINE_COST
-      if (lines > 0 && spent + next > budget) break
-      spent += next
-      lines += 1
-      end += 1
-    }
-    if (end > first || entry.hunk.lines.length === 0) drawn.set(entry.key, { start: first, end })
-    if (end < entry.hunk.lines.length) break
-  }
-
-  return drawn
+  return out
 }
 
 /** The number of digits of a hunk's widest line number, either side. */
@@ -107,14 +80,34 @@ function pad(number: number | null, digits: number): string {
   return String(number ?? '').padStart(digits)
 }
 
-/** The marker and tint of a line: `+` on the added colour, `-` on the removed. */
-function look(line: DiffLine): {
-  mark: string
-  tint: 'diffAdded' | 'diffRemoved' | undefined
-} {
-  if (line.type === 'add') return { mark: '+', tint: 'diffAdded' }
-  if (line.type === 'del') return { mark: '-', tint: 'diffRemoved' }
-  return { mark: ' ', tint: undefined }
+const MARK: Record<DiffLine['type'], string> = { add: '+', del: '-', context: ' ' }
+const TINT: Record<DiffLine['type'], 'diffAdded' | 'diffRemoved' | undefined> = {
+  add: 'diffAdded',
+  del: 'diffRemoved',
+  context: undefined,
+}
+
+/** One line as the unified block writes it: both numbers, the marker, the code.
+ * An addition at new line 41 with two digits, `x`, is `'   41 +x'`. */
+export function unifiedLine(line: DiffLine, digits: number): string {
+  return `${pad(line.oldNo, digits)} ${pad(line.newNo, digits)} ${MARK[line.type]}${line.content}`
+}
+
+/** One side's line in the side-by-side view: that side's number, the marker,
+ * the code; a space where the shorter side of a change block runs out. */
+function sideLine(line: DiffLine | undefined, side: 'old' | 'new', digits: number): string {
+  if (line === undefined) return ' '
+
+  return `${pad(side === 'old' ? line.oldNo : line.newNo, digits)} ${MARK[line.type]}${line.content}`
+}
+
+/** What a hunk costs drawn as text: its characters with the numbers, and an
+ * element per run and for its frame. */
+function textCost(hunk: Hunk): number {
+  const digits = digitsOf(hunk)
+  const chars = hunk.lines.reduce((sum, line) => sum + line.content.length + 2 * digits + 4, 0)
+
+  return chars + (runs(hunk.lines.map(line => line.type)).length + 6) * ELEMENT_COST
 }
 
 export function renderRichPane(
@@ -124,7 +117,7 @@ export function renderRichPane(
   anchor: Anchor,
   actions: PaneActions,
   view: DiffView = 'unified',
-  from: string | null = null,
+  picking: string | null = null,
 ) {
   const { Box, Text, Button } = $.ui.resolve(e)
 
@@ -144,133 +137,153 @@ export function renderRichPane(
   const foldable = diff === null ? [] : diff.files.filter(file => file.hunks.length > 0)
   const foldedCount = `${foldable.filter(file => folded.has(file.id)).length}/${foldable.length} folded`
 
-  /** The gutter of one line: a button showing its numbers, `▸` on the anchor. */
-  const gutter = (file: DiffFile, hunk: number, row: number, label: string, anchored: boolean, key: string) => (
-    <Button key={key} plain dimColor={anchored ? undefined : true} onPress={() => actions.pressGutter({ file: file.path, hunk, row })}>
-      <Text mono tabular>
-        {`${anchored ? '▸' : ' '}${label} `}
-      </Text>
-    </Button>
-  )
+  /** Lines as one Text: a context run a plain string, a changed run a
+   * nested Text on its tint. The newline after a tinted run stays outside
+   * it, so the tint ends with the line. */
+  const block = (lines: Array<{ type: DiffLine['type']; text: string }>, key: string) => {
+    const children = runs(lines.map(line => line.type)).flatMap((run, r) => {
+      const text = lines
+        .slice(run.from, run.to + 1)
+        .map(line => line.text)
+        .join('\n')
+      const tail = run.to < lines.length - 1 ? ['\n'] : []
+      const tint = TINT[run.type]
+      if (tint === undefined) return [text + tail.join('')]
 
-  /** One line's text in the monospaced face; a blank line keeps a space so its row keeps its height. */
-  const code = (line: DiffLine) => (
-    <Text mono wrap="wrap">
-      {`${look(line).mark}${line.content === '' ? ' ' : line.content}`}
-    </Text>
-  )
+      return [
+        <Text backgroundColor={tint}>{text}</Text>,
+        ...tail,
+      ]
+    })
 
-  const unified = (file: DiffFile, f: number, hunk: Hunk, index: number, anchoredRow: number, range: DrawnRange) => {
-    const digits = digitsOf(hunk)
-
-    return hunk.lines
-      .slice(range.start, range.end)
-      .map((line, i) => ({ line, row: range.start + i }))
-      .map(({ line, row }) => (
-        <Box key={`r${f}.${index}.${row}`} flexDirection="row" backgroundColor={look(line).tint}>
-          {gutter(file, index, row, `${pad(line.oldNo, digits)} ${pad(line.newNo, digits)}`, row === anchoredRow, `g${f}.${index}.${row}`)}
-          {code(line)}
-        </Box>
-      ))
+    // The Box carries the key: a Text takes none, and a test or a scroll finds the block by it.
+    return (
+      <Box key={key}>
+        <Text mono wrap="wrap">
+          {children}
+        </Text>
+      </Box>
+    )
   }
 
-  const split = (file: DiffFile, f: number, hunk: Hunk, index: number, anchoredRow: number, range: DrawnRange) => {
-    const inside = (i: number) => i >= range.start && i < range.end
+  const unified = (hunk: Hunk, key: string) => {
     const digits = digitsOf(hunk)
-    // One side of one row: its number and text, or a blank half where the side ran out.
-    const half = (row: number | undefined, which: 'o' | 'n', key: string) => {
-      const line = row === undefined ? undefined : hunk.lines[row]
-      if (row === undefined || line === undefined) return <Box key={key} width="50%" flexShrink={0} />
-      const number = which === 'o' ? line.oldNo : line.newNo
+
+    return block(
+      hunk.lines.map(line => ({ type: line.type, text: unifiedLine(line, digits) })),
+      key,
+    )
+  }
+
+  const split = (hunk: Hunk, key: string) => {
+    const digits = digitsOf(hunk)
+    const side = (indexes: number[], length: number, which: 'old' | 'new') =>
+      Array.from({ length }, (_, i) => {
+        const at = indexes[i]
+        const line = at === undefined ? undefined : hunk.lines[at]
+
+        return { type: line?.type ?? 'context', text: sideLine(line, which, digits) }
+      })
+
+    return splitHunk(hunk).map((b, n) => {
+      const length = Math.max(b.left.length, b.right.length)
 
       return (
-        <Box key={key} width="50%" flexShrink={0} flexDirection="row" backgroundColor={look(line).tint}>
-          {gutter(file, index, row, pad(number, digits), row === anchoredRow, `g${which}${f}.${index}.${row}`)}
-          {code(line)}
+        <Box key={`${key}.b${n}`} flexDirection="row">
+          <Box width="50%" flexShrink={0}>
+            {block(side(b.left, length, 'old'), `${key}.o${n}`)}
+          </Box>
+          <Box width="50%" flexShrink={0}>
+            {block(side(b.right, length, 'new'), `${key}.n${n}`)}
+          </Box>
         </Box>
       )
-    }
-
-    // A block cut by the range keeps only its lines inside it.
-    return splitHunk(hunk)
-      .map(block => ({
-        ...block,
-        left: block.left.filter(inside),
-        right: block.right.filter(inside),
-      }))
-      .flatMap((block, b) =>
-        Array.from({ length: Math.max(block.left.length, block.right.length) }, (_, i) => (
-          <Box key={`p${f}.${index}.${b}.${i}`} flexDirection="row">
-            {half(block.left[i], 'o', `o${f}.${index}.${b}.${i}`)}
-            {half(block.right[i], 'n', `n${f}.${index}.${b}.${i}`)}
-          </Box>
-        )),
-      )
+    })
   }
 
-  /** The row standing for lines left out of the drawing, with the button
-   * that starts the drawing at the first of them, keyed `src-a-ts:2:40`. */
-  const leftOut = (f: number, lines: number, hunks: number, target: string) => (
-    <Box key={`x${f}.${target}`} flexDirection="row" gap={1} marginTop={1}>
-      <Text dimColor>
-        {hunks > 1 ? `${plural(hunks, 'hunk')}, ${plural(lines, 'line')}, not drawn` : `${plural(lines, 'line')} not drawn`}
-      </Text>
-      <Button key={`from:${target}`} plain label="draw from here" onPress={() => actions.drawFrom(target)} />
-    </Box>
-  )
+  /** The hunk being picked from: a row per line, its numbers a button. The
+   * first press anchors (`▸`), the second adds the range and ends the mode. */
+  const pickRows = (file: DiffFile, hunk: Hunk, index: number) => {
+    const digits = digitsOf(hunk)
+    const anchoredRow = anchor !== null && anchor.file === file.path && anchor.hunk === index ? anchor.row : -1
+
+    return hunk.lines.slice(0, PICK_LIMIT).map((line, row) => (
+      <Box key={`r${row}`} flexDirection="row" backgroundColor={TINT[line.type]}>
+        <Button
+          key={`pick:${file.id}:${index}:${row}`}
+          plain
+          dimColor={row === anchoredRow ? undefined : true}
+          onPress={() => {
+            actions.pressGutter({ file: file.path, hunk: index, row })
+            // A press while this hunk holds the anchor is the second: the range is added.
+            if (anchoredRow !== -1) actions.pick(null)
+          }}
+        >
+          <Text mono tabular>
+            {`${row === anchoredRow ? '▸' : ' '}${pad(line.oldNo, digits)} ${pad(line.newNo, digits)} `}
+          </Text>
+        </Button>
+        <Text mono wrap="wrap">
+          {`${MARK[line.type]}${line.content}`}
+        </Text>
+      </Box>
+    ))
+  }
 
   const sections: RenderElement[] = []
   if (diff !== null) {
-    const drawn = drawnRanges(diff.files, folded, from, lineBudget(diff.files.length))
+    // Hunks are drawn in order while the budget lasts. The picked hunk's
+    // rows are paid for first, so picking always fits.
+    const pickedLines =
+      diff.files.flatMap(file => file.hunks.map((hunk, i) => ({ key: `${file.id}:${i}`, hunk }))).find(x => x.key === picking)?.hunk
+        .lines.length ?? 0
+    let spent = Math.min(pickedLines, PICK_LIMIT) * PICK_LINE_COST + diff.files.length * 4 * ELEMENT_COST
     diff.files.forEach((file, f) => {
       const isFolded = folded.has(file.id)
       const rows: RenderElement[] = []
-      // Whole hunks left out in a row, shown as one row once a drawn hunk or the file's end comes.
-      let run: number[] = []
-      const flush = () => {
-        const first = run[0]
-        if (first !== undefined) {
-          const lines = run.reduce((sum, i) => sum + (file.hunks[i]?.lines.length ?? 0), 0)
-          rows.push(leftOut(f, lines, run.length, `${file.id}:${first}:0`))
-        }
-        run = []
-      }
       if (!isFolded) {
         file.hunks.forEach((hunk, index) => {
-          const range = drawn.get(`${file.id}:${index}`)
-          if (range === undefined) {
-            run.push(index)
-            return
-          }
-          flush()
-          const anchoredRow = anchor !== null && anchor.file === file.path && anchor.hunk === index ? anchor.row : -1
+          const key = `${file.id}:${index}`
+          const isPicking = key === picking
+          const cost = isPicking ? 0 : textCost(hunk)
+          const drawn = isPicking || spent + cost <= WIRE_BUDGET
+          if (drawn) spent += cost
+          const header = renderHunkHeader(hunk)
           rows.push(
             <Box key={`h${f}.${index}`} flexDirection="column" marginTop={1}>
-              <Box flexDirection="row" gap={1}>
+              <Box flexDirection="row" gap={2}>
                 <Box flexGrow={1} flexShrink={1}>
                   <Text mono dimColor>
-                    {renderHunkHeader(hunk)}
+                    {drawn
+                      ? header
+                      : `${header} · ${plural(hunk.lines.length, 'line')} not drawn: the app takes 100,000 characters at once, so fold a file to make room`}
                   </Text>
                 </Box>
-                <Button key={`hunk+:${file.id}:${index}`} plain dimColor label="+hunk" onPress={() => actions.addHunk(file, index)} />
+                <Button
+                  key={`pick:${key}`}
+                  plain
+                  dimColor
+                  label={isPicking ? 'done picking' : 'pick lines'}
+                  onPress={() => actions.pick(isPicking ? null : key)}
+                />
+                <Button key={`hunk+:${key}`} plain dimColor label="+hunk" onPress={() => actions.addHunk(file, index)} />
               </Box>
-              {range.start > 0 && leftOut(f, range.start, 1, `${file.id}:${index}:0`)}
-              {view === 'split' ? split(file, f, hunk, index, anchoredRow, range) : unified(file, f, hunk, index, anchoredRow, range)}
-              {range.end < hunk.lines.length && leftOut(f, hunk.lines.length - range.end, 1, `${file.id}:${index}:${range.end}`)}
+              {isPicking && pickRows(file, hunk, index)}
+              {isPicking && hunk.lines.length > PICK_LIMIT && (
+                <Text dimColor>{`${plural(hunk.lines.length - PICK_LIMIT, 'more line')}: type #${file.path}:from-to in the prompt to pick past here`}</Text>
+              )}
+              {!isPicking && drawn && (view === 'split' ? split(hunk, `t${f}.${index}`) : unified(hunk, `t${f}.${index}`))}
             </Box>,
           )
         })
-        flush()
       }
       sections.push(
         <Box key={`f${f}`} flexDirection="column" marginTop={1}>
-          <Box flexDirection="row" gap={1}>
+          <Box flexDirection="row" gap={2}>
             <Box flexGrow={1} flexShrink={1}>
               <Text weight="semibold">{fileHeader(file)}</Text>
             </Box>
-            {file.hunks.length > 0 && (
-              <Button key={`file+:${file.id}`} plain dimColor label="+file" onPress={() => actions.addFile(file)} />
-            )}
+            {file.hunks.length > 0 && <Button key={`file+:${file.id}`} plain dimColor label="+file" onPress={() => actions.addFile(file)} />}
             {file.hunks.length > 0 && (
               <Button key={`fold:${file.id}`} plain dimColor label={foldLabel(isFolded)} onPress={() => actions.toggleFold(file.id)} />
             )}
