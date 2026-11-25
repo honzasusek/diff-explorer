@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { highlightLine, isHighlighted } from "./highlight.ts";
+import { highlightLine, languageOf } from "./highlight.ts";
 
-const kinds = (line: string, state: "code" | "block" | "template" = "code") =>
-  highlightLine(line, state).pieces.map(p => [p.kind, p.text]);
+const kinds = (line: string, state: "code" | "block" | "template" = "code", language: "script" | "json" = "script") =>
+  highlightLine(line, state, language).pieces.map(p => [p.kind, p.text]);
 
 test("keywords, numbers and comments are told apart from plain code", () => {
   assert.deepEqual(kinds("const n = 4 // four"), [
@@ -44,8 +44,37 @@ test("a block comment and a template string carry over to the next line", () => 
   assert.deepEqual(highlightLine("b` + 1", "template").pieces[0], { text: "b`", kind: "string" });
 });
 
-test("only TypeScript files are coloured", () => {
-  assert.equal(isHighlighted("src/a.ts"), true);
-  assert.equal(isHighlighted("src/App.tsx"), true);
-  assert.equal(isHighlighted("src/a.js"), false);
+test("TypeScript and JavaScript share the script rules, JSON has its own, other files are not coloured", () => {
+  assert.equal(languageOf("src/a.ts"), "script");
+  assert.equal(languageOf("src/App.tsx"), "script");
+  assert.equal(languageOf("src/a.js"), "script");
+  assert.equal(languageOf("src/App.jsx"), "script");
+  assert.equal(languageOf("package.json"), "json");
+  assert.equal(languageOf("a.py"), null);
+});
+
+test("a JSON key is told from a string value", () => {
+  assert.deepEqual(kinds('  "port": 8080, "on": true, "name": "x"', "code", "json"), [
+    [null, "  "],
+    ["property", '"port"'],
+    [null, ": "],
+    ["number", "8080"],
+    [null, ", "],
+    ["property", '"on"'],
+    [null, ": "],
+    ["keyword", "true"],
+    [null, ", "],
+    ["property", '"name"'],
+    [null, ": "],
+    ["string", '"x"'],
+  ]);
+});
+
+test("outside JSON a string before a colon stays a string", () => {
+  assert.deepEqual(kinds("c ? 'a' : 'b'"), [
+    [null, "c ? "],
+    ["string", "'a'"],
+    [null, " : "],
+    ["string", "'b'"],
+  ]);
 });

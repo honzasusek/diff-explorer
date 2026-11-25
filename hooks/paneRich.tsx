@@ -5,8 +5,8 @@ import type { DiffFile, DiffLine, Hunk } from '../core/types.ts'
 import type { Anchor } from '../core/diff/selection.ts'
 import { renderHunkHeader } from '../core/diff/patchRenderer.ts'
 import { splitHunk } from '../core/diff/split.ts'
-import { highlightLine, isHighlighted } from '../core/diff/highlight.ts'
-import type { LineState, Piece, TokenKind } from '../core/diff/highlight.ts'
+import { highlightLine, languageOf } from '../core/diff/highlight.ts'
+import type { Language, LineState, Piece, TokenKind } from '../core/diff/highlight.ts'
 import { fileHeader, foldLabel, headLine, plural, statusLine } from './pane.tsx'
 import type { PaneActions } from './pane.tsx'
 import { diffCache } from './state.ts'
@@ -34,7 +34,7 @@ import { diffCache } from './state.ts'
 // about the diff's own text. Side by side, a hunk's blocks (core/diff/split.ts)
 // are rows of two such Texts, so each block starts level on both sides.
 //
-// TypeScript is coloured by the mod (core/diff/highlight.ts), each keyword,
+// TypeScript, JavaScript and JSON are coloured by the mod (core/diff/highlight.ts), each keyword,
 // string, comment or number a nested Text in its colour. Those cost an
 // element each, so hunks are coloured from the top while the budget left after
 // drawing them all lasts; the rest stay plain, never left out.
@@ -62,6 +62,7 @@ const PIECE_COST = 70
  * no keys for code. A comment is drawn dim instead, in the theme's own way. */
 const COLOR: Record<Exclude<TokenKind, 'comment'>, string> = {
   keyword: '#a855f7',
+  property: '#3b82f6',
   string: '#d97706',
   number: '#0891b2',
 }
@@ -69,12 +70,12 @@ const COLOR: Record<Exclude<TokenKind, 'comment'>, string> = {
 /** A hunk's lines as pieces, each side's open comment or template carried
  * from line to line: a removed line follows the old side, an added line the
  * new side, and a context line both. */
-function piecesOf(hunk: Hunk): Piece[][] {
+function piecesOf(hunk: Hunk, language: Language): Piece[][] {
   let old: LineState = 'code'
   let neu: LineState = 'code'
 
   return hunk.lines.map(line => {
-    const { pieces, state } = highlightLine(line.content, line.type === 'del' ? old : neu)
+    const { pieces, state } = highlightLine(line.content, line.type === 'del' ? old : neu, language)
     if (line.type !== 'add') old = state
     if (line.type !== 'del') neu = state
 
@@ -349,16 +350,17 @@ export function renderRichPane(
         drawn.add(key)
       })
     })
-    // What is left after every drawn hunk colours TypeScript hunks from the
+    // What is left after every drawn hunk colours the hunks of coloured languages from the
     // top; the first that does not fit ends the colouring, so it never skips about.
     const coloured = new Map<string, Piece[][]>()
     let colouring = true
     diff.files.forEach(file => {
-      if (!isHighlighted(file.path)) return
+      const language = languageOf(file.path)
+      if (language === null) return
       file.hunks.forEach((hunk, index) => {
         const key = `${file.id}:${index}`
         if (!colouring || key === picking || !drawn.has(key)) return
-        const pieces = piecesOf(hunk)
+        const pieces = piecesOf(hunk, language)
         const cost = pieceCount(pieces) * PIECE_COST
         if (spent + cost > WIRE_BUDGET) colouring = false
         else {

@@ -1,4 +1,4 @@
-// Syntax colours for TypeScript lines, worked out by the mod itself. The
+// Syntax colours for TypeScript, JavaScript and JSON lines, worked out by the mod itself. The
 // desktop app colours code only inside its own code cards, which carry no line
 // numbers, so the desktop pane draws plain text and colours it from here.
 //
@@ -10,9 +10,14 @@
 //
 // The state carries a block comment or a template string over to the next
 // line. It is rough on purpose: no regex literals and no JSX text, so a quote
-// in either starts a string that ends with the line.
+// in either starts a string that ends with the line. JSON goes through the
+// same rules, which already cover its strings, numbers, true, false and null;
+// only a key, a string followed by a colon, is told apart:
+//
+//   highlightLine('  "port": 8080,', "code", "json")
+//   gives pieces  ["  "] [property '"port"'] [": "] [number "8080"] [","]
 
-export type TokenKind = "keyword" | "string" | "comment" | "number";
+export type TokenKind = "keyword" | "string" | "comment" | "number" | "property";
 
 export interface Piece {
   text: string;
@@ -23,9 +28,16 @@ export interface Piece {
 /** What is still open at the end of a line: nothing, a block comment, or a template string. */
 export type LineState = "code" | "block" | "template";
 
-/** Files coloured: TypeScript only for now, by extension. */
-export function isHighlighted(path: string): boolean {
-  return /\.(ts|tsx|mts|cts)$/.test(path);
+/** The languages coloured: TypeScript and JavaScript share one set of rules. */
+export type Language = "script" | "json";
+
+/** A file's language by its extension, or null when it is not coloured:
+ * `languageOf("src/App.jsx")` is `"script"`, `languageOf("a.py")` is null. */
+export function languageOf(path: string): Language | null {
+  if (/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/.test(path)) return "script";
+  if (/\.(json|jsonc)$/.test(path)) return "json";
+
+  return null;
 }
 
 const KEYWORDS = new Set(
@@ -53,7 +65,7 @@ function closeOf(line: string, from: number, quote: string): { end: number; clos
 }
 
 /** One line's pieces and the state the next line starts in; see the top of the file. */
-export function highlightLine(line: string, state: LineState): { pieces: Piece[]; state: LineState } {
+export function highlightLine(line: string, state: LineState, language: Language = "script"): { pieces: Piece[]; state: LineState } {
   const pieces: Piece[] = [];
   const push = (text: string, kind: TokenKind | null) => {
     if (text === "") return;
@@ -97,7 +109,8 @@ export function highlightLine(line: string, state: LineState): { pieces: Piece[]
     } else if (c === '"' || c === "'" || c === "`") {
       flush(i);
       const close = closeOf(line, i + 1, c);
-      push(line.slice(i, close.end), "string");
+      const isKey = language === "json" && /^\s*:/.test(line.slice(close.end));
+      push(line.slice(i, close.end), isKey ? "property" : "string");
       if (c === "`" && !close.closed) next = "template";
       i = plainFrom = close.end;
     } else if (/[A-Za-z_$]/.test(c)) {
