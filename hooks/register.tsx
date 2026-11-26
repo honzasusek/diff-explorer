@@ -26,7 +26,7 @@ import { plural, renderPane } from './pane.tsx'
 import { renderRichPane } from './paneRich.tsx'
 import type { PaneActions } from './pane.tsx'
 import { engineRunner } from './runner.ts'
-import { PANE, diffCache } from './state.ts'
+import { PANE, diffCache, paneWindow } from './state.ts'
 
 // Bump the tag when Review's fields change: a reload keeps what the previous
 // version stored, and a different tag reads as the initial value instead.
@@ -45,6 +45,10 @@ const view = atom({ plugin: 'diff-explorer', key: 'view' } as const, 'unified', 
  * one drawing but has no line to press; the hunk named here is drawn a line
  * per row instead, each with its numbers as a button. */
 const picking = atom({ plugin: 'diff-explorer', key: 'picking' } as const, null, { shape: 'picking-1' })
+/** The diff row at the top of the terminal pane's window, 0 at the first
+ * file's header. The terminal pane scrolls its diff itself under a head that
+ * stays put (pane.tsx), so the scroll position is the mod's to keep. */
+const top = atom({ plugin: 'diff-explorer', key: 'top' } as const, 0, { shape: 'top-1' })
 
 /** Body columns to ask the dock for; the engine caps a dock at 45% of the terminal. */
 const PANE_COLUMNS = 80
@@ -248,6 +252,20 @@ async function gutterPressed($: EngineInterface, row: HunkRow): Promise<void> {
   if (file !== undefined) await addCaptured($, captureRows(file, press.hunk, press.from, press.to))
 }
 
+/** Rows a scroll moves the terminal pane's window. A wheel tick or an arrow
+ * moves as asked. The engine asks a page key for the pane's whole body, so
+ * the window moves its own height; Home and End ask for the whole tree, one
+ * row more for the spare row, so the window goes to the diff's end. With a
+ * body of 30 rows and a window of 26 over 500 rows: `scrollStep(-1, 30, 31,
+ * 26, 474)` is -1, `scrollStep(30, 30, 31, 26, 474)` 26, `scrollStep(31, 30,
+ * 31, 26, 474)` 474. */
+export function scrollStep(by: number, bodyRows: number, contentRows: number, windowRows: number, maxTop: number): number {
+  if (contentRows > bodyRows && Math.abs(by) === contentRows) return Math.sign(by) * maxTop
+  if (Math.abs(by) >= bodyRows) return Math.sign(by) * windowRows
+
+  return by
+}
+
 /** Scrolls the pane to where a ref's lines are now: its hunk, or the file
  * header when the file is folded or the line is gone. */
 async function showRef($: EngineInterface, ref: CodeRef): Promise<void> {
@@ -261,6 +279,14 @@ async function showRef($: EngineInterface, ref: CodeRef): Promise<void> {
   const current = await read($, review)
   const folded = current?.files?.find(f => f.id === at.file.id)?.folded === true
   const key = at.hunk === null || folded ? fileKey(at.file.id) : hunkKey(at.file.id, at.hunk)
+  // The terminal pane scrolls itself: its window starts at the slot's row.
+  const window = paneWindow.current
+  if (window !== null) {
+    const slot = window.layout.files.flatMap(f => [f, ...f.hunks]).find(s => s.key === key)
+    if (slot !== undefined) await update($, top, () => Math.min(slot.top, window.maxTop))
+
+    return
+  }
   const scrolled = await $.ui.scroll({ in: PANE, to: { key }, block: 'start' }).catch(err => ({ deny: describeError(err) }))
   if (scrolled.deny !== undefined) $.ui.log(`diff-explorer: could not scroll to ${key}: ${scrolled.deny}`)
 }
@@ -476,6 +502,7 @@ export const register: Register = (on, options) => {
     await update($, review, () => opening)
     await update($, basket, () => [])
     await update($, anchor, () => null)
+    await update($, top, () => 0)
     await openPane($, config)
 
     return { text: await openCurrent($, opening, config) }
@@ -601,9 +628,24 @@ export const register: Register = (on, options) => {
   // surface draws in pixels, where paneRich.tsx gives each diff line a row.
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const [current, mark, shown] = [await read($, review), await read($, anchor), await read($, view)]
-    if (e.surface === 'terminal') return renderPane($, e, current, mark, paneActions($), shown)
+    if (e.surface === 'terminal') return renderPane($, e, current, mark, paneActions($), shown, await read($, top))
 
     return renderRichPane($, e, current, mark, paneActions($), shown, await read($, picking))
+  })
+
+  // The terminal pane's tree is its head, a window the room's height and one
+  // spare row (pane.tsx): a wheel tick or a scroll key moves the window over
+  // the diff instead of the engine's, which stays put. A taller tree is
+  // another surface's, which scrolls as the engine does.
+  on('ui.scroll', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+    const window = paneWindow.current
+    if (window === null || e.contentRows > e.bodyRows + 1) return next(e)
+    const step = scrollStep(e.by, e.bodyRows, e.contentRows, window.windowRows, window.maxTop)
+    const now = Math.min(await read($, top), window.maxTop)
+    const moved = Math.min(Math.max(0, now + step), window.maxTop)
+    if (moved !== now) await update($, top, () => moved)
+
+    return {}
   })
 
   // Typeahead for a #path:from-to token: the diff's paths, then one file's hunks.

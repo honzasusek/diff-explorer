@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { Diff, DiffFile, DiffLine, Hunk } from "../types.ts";
-import { hunksNear, layoutDiff } from "./layout.ts";
+import { layoutDiff } from "./layout.ts";
 import type { RowMeasure } from "./layout.ts";
 
 function hunk(lines: number): Hunk {
@@ -37,16 +37,6 @@ test("a folded file keeps its header row and nothing else", () => {
   const layout = layoutDiff(diff, new Set(["a"]), 2);
   assert.deepEqual(layout.files.map((f) => [f.top, f.rows]), [[2, 1], [3, 1], [4, 12]]);
   assert.equal(layout.rows, 16);
-});
-
-test("hunksNear picks the hunks crossing the widened window, in order", () => {
-  const layout = layoutDiff(diff, new Set(), 2);
-  const keys = (window: { offset: number; bodyRows: number }) => hunksNear(layout, window).map((h) => h.key);
-  assert.deepEqual(keys({ offset: 0, bodyRows: 4 }), ["hunk:a:0", "hunk:a:1"]);
-  assert.deepEqual(keys({ offset: 0, bodyRows: 2 }), ["hunk:a:0"]);
-  assert.deepEqual(keys({ offset: 14, bodyRows: 2 }), ["hunk:a:1", "hunk:c:0"]);
-  assert.deepEqual(keys({ offset: 20, bodyRows: 2 }), ["hunk:c:0"]);
-  assert.deepEqual(keys({ offset: 100, bodyRows: 2 }), []);
 });
 
 test("a measure that wraps grows the headers, the lines and every row after them", () => {

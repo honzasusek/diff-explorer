@@ -13,7 +13,7 @@ import { diffCache } from './state.ts'
 
 // The diff pane as the desktop app draws it. The terminal's pane (pane.tsx)
 // sizes everything in character rows: each gutter button is as tall as its
-// line's wrapped rows, and a sticky head is laid at the window's row offset.
+// line's wrapped rows, and the diff scrolls in a window counted in rows.
 // The desktop draws in pixels with its own fonts, so those heights miss, and
 // its diff Code is a card with a header and padding of its own, so a gutter
 // beside it never lines up.

@@ -87,6 +87,6 @@ export type DiffView = 'unified' | 'split'
 
 declare module 'claude-code' {
   interface PluginState {
-    'diff-explorer': { review: Shaped<Review | null>; basket: Shaped<Ref[]>; anchor: Shaped<Anchor | null>; view: Shaped<DiffView>; picking: Shaped<string | null> }
+    'diff-explorer': { review: Shaped<Review | null>; basket: Shaped<Ref[]>; anchor: Shaped<Anchor | null>; view: Shaped<DiffView>; picking: Shaped<string | null>; top: Shaped<number> }
   }
 }

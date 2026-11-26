@@ -18,7 +18,8 @@ const PANE = {
     isFocused: false,
     bodyColumns: 60,
     placement: 'dock',
-    scroll: { offset: 0, bodyRows: 20 },
+    // Tall enough that the sample diff fits whole: the pane draws only what its window shows.
+    scroll: { offset: 0, bodyRows: 80 },
     view: {},
   },
 } as const
@@ -176,41 +177,82 @@ async function openBig($: Engine, on: On) {
   expect(ran.text).toBe('Opened working tree: 1 file, +1800 −0 against origin/HEAD.')
 }
 
-test('a large file starts folded; unfolding draws the hunks near the window and placeholders for the rest', async ($, on) => {
+test('the terminal pane scrolls the diff under a head that stays, drawing only its window', async ($, on) => {
+  // Beneath the mod the test stands for the engine and notes each scroll it gets.
+  const engineMoves: number[] = []
+  on('ui.scroll', (_, e) => (engineMoves.push(e.by), {}))
   await openBig($, on)
-  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal', props: { ...PANE.props, scroll: { offset: 0, bodyRows: 20 } } })
   expect(await ui.find({ type: 'Text', text: /^M big\.ts\s+\+1800 −0$/ })).toBeDefined()
   expect((await ui.find({ type: 'Button', key: 'fold:big-ts' }))?.text).toBe('unfold')
   expect(await ui.findAll({ type: 'Code' })).toHaveLength(0)
 
   await ui.press({ key: 'fold:big-ts' })
   expect((await ui.find({ type: 'Button', key: 'fold:big-ts' }))?.text).toBe('fold')
-  // Rows: head 2, file header 1, so the first hunk starts at row 3 and each
-  // hunk takes 601 rows. At offset 0 with 20 body rows only the first is near.
-  let codes = await ui.findAll({ type: 'Code' })
-  expect(codes).toHaveLength(1)
-  expect(String(codes[0]?.props.source).startsWith('@@ -1,0 +1,600 @@')).toBe(true)
-  expect(await ui.find({ type: 'Text', text: /^@@ -1000,0 \+1000,600 @@ · 600 lines/ })).toBeDefined()
-  // At the top the head shows as drawn, its fold count included, with no sticky row over it.
-  expect(await ui.find({ type: 'Box', key: 'sticky' })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: '0/1 folded' })).toBeDefined()
+  // Diff rows: the file header 0, then hunks of 601 rows at 1, 602 and 1203,
+  // 1804 in all. The head takes 3 of the 20 body rows (its text, the switches
+  // under it, the status line), so the window shows 17: the file header, the
+  // first hunk's header and its first 15 lines, drawn as a hunk of their own.
+  // That slice runs on unseen to line 100, the first as wide as the hunk's
+  // widest number, so the engine pads its numbers as for the whole hunk.
+  const codes = async () => (await ui.findAll({ type: 'Code' })).map(code => String(code.props.source).split('\n')[0])
+  const hunkHeader = async () => (await ui.find({ type: 'Text', text: /^@@ -1,0 \+1,600 @@/ })) !== undefined
+  expect(await codes()).toEqual(['@@ -1,0 +1,100 @@'])
+  expect((await ui.find({ key: 'window' }))?.props.height).toBe(17)
+  // One spare row under the window gives the engine a row to scroll, so it raises the keys.
+  expect(await ui.find({ key: 'spare' })).toBeDefined()
 
-  await ui.redraw({ ...PANE.props, scroll: { offset: 650, bodyRows: 20 } })
-  expect(await ui.find({ type: 'Box', key: 'sticky' })).toBeDefined()
-  // big.ts is unfolded, so none of its one foldable file is folded.
+  // The tree is 21 rows over a body of 20. A scroll moves the diff under the
+  // head and never reaches the engine: its window stays put.
+  const scroll = (by: number, contentRows = 21) =>
+    $.ui.scroll({ component: 'Pane', requestId: 'explore', offset: 0, by, bodyRows: 20, contentRows, origin: { kind: 'person' } })
+  expect(await scroll(1)).toEqual({})
+  expect(await ui.find({ type: 'Text', text: /^M big\.ts/ })).toBeUndefined()
+  expect(await hunkHeader()).toBe(true)
+  await scroll(1)
+  expect(await hunkHeader()).toBe(false)
+  expect(await codes()).toEqual(['@@ -1,0 +1,100 @@'])
+  // A page key asks for the whole body; the window moves its own 17 rows.
+  await scroll(20)
+  expect(await codes()).toEqual(['@@ -1,0 +18,83 @@'])
+  // End asks for the whole tree; the window goes to the diff's last rows.
+  await scroll(21)
+  expect(await codes()).toEqual(['@@ -2000,0 +2583,17 @@'])
+  await scroll(-21)
+  expect(await codes()).toEqual(['@@ -1,0 +1,100 @@'])
+  // The head stays drawn at the top all along, its fold count and switches with it.
   expect(await ui.find({ type: 'Text', text: '0/1 folded' })).toBeDefined()
-  // The switches ride along in it and still press.
-  expect((await ui.find({ type: 'Button', key: 'sticky:view' }))?.text).toBe('side-by-side: off')
-  await ui.press({ key: 'sticky:view' })
-  expect((await ui.find({ type: 'Button', key: 'sticky:view' }))?.text).toBe('side-by-side: on')
-  await ui.press({ key: 'sticky:view' })
-  codes = await ui.findAll({ type: 'Code' })
-  expect(codes).toHaveLength(1)
-  expect(String(codes[0]?.props.source).startsWith('@@ -1000,0 +1000,600 @@')).toBe(true)
-  expect(await ui.find({ type: 'Text', text: /^@@ -2000,0 \+2000,600 @@ · 600 lines/ })).toBeDefined()
+  expect((await ui.find({ type: 'Button', key: 'view' }))?.text).toBe('side-by-side: off')
 
+  // A chip brings its hunk to the window's top: the second hunk, at row 602.
+  await run($, 'ref', 'big.ts:1000')
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await band.press({ key: 'ref:big.ts:new:1000-1000' })
+  expect(await codes()).toEqual(['@@ -1000,0 +1000,16 @@'])
+  await band.unmount()
+
+  // Side by side the 600 added lines are one block; the window cuts into it
+  // the same way, the right side from line 1001 on, the left side empty.
+  await scroll(1)
+  await ui.press({ key: 'view' })
+  expect(await codes()).toEqual(['@@ -1000,0 +1000,17 @@'])
+  await scroll(1)
+  // A side's own hunk (core/diff/split.ts) starts both numbers at its first line.
+  expect(await codes()).toEqual(['@@ -1001,0 +1001,17 @@'])
+  await ui.press({ key: 'view' })
+
+  // A tree taller than the window is not this pane's own: it is left to the engine.
+  expect(engineMoves).toEqual([])
+  await scroll(5, 100)
+  expect(engineMoves).toEqual([5])
+  expect(await codes()).toEqual(['@@ -1000,0 +1001,17 @@'])
+
+  // Folded, the diff is one row: the window shrinks to it, with no spare row.
+  await scroll(-21)
   await ui.press({ key: 'fold:big-ts' })
   expect(await ui.findAll({ type: 'Code' })).toHaveLength(0)
+  expect((await ui.find({ key: 'window' }))?.props.height).toBe(1)
+  expect(await ui.find({ key: 'spare' })).toBeUndefined()
   await ui.unmount()
 })
 

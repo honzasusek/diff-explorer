@@ -1,15 +1,16 @@
-import type { EngineInterface, RenderInput } from 'claude-code'
+import type { EngineInterface, RenderElement, RenderInput } from 'claude-code'
 
 import type { DiffView, Review, ReviewFile } from '../types'
 import type { DiffFile, DiffLine, Hunk, HunkRow, Side } from '../core/types.ts'
 import type { Anchor } from '../core/diff/selection.ts'
-import { hunksNear, layoutDiff } from '../core/diff/layout.ts'
-import type { RowMeasure } from '../core/diff/layout.ts'
+import { layoutDiff } from '../core/diff/layout.ts'
+import { cut, subHunk } from '../core/diff/window.ts'
+import type { HunkSlot, RowMeasure } from '../core/diff/layout.ts'
 import { renderHunk, renderHunkHeader } from '../core/diff/patchRenderer.ts'
 import { sideDigits, sideNumber, sideSource, splitHunk } from '../core/diff/split.ts'
 import type { SplitBlock } from '../core/diff/split.ts'
-import { codeRows, textWidth, wrapWords } from '../core/diff/wrap.ts'
-import { diffCache } from './state.ts'
+import { codeRows, wrapWords } from '../core/diff/wrap.ts'
+import { diffCache, paneWindow } from './state.ts'
 
 // The diff pane. Top to bottom: a head line with two switches, the
 // side-by-side view and auto-commit (whether Claude may commit in this
@@ -17,10 +18,20 @@ import { diffCache } from './state.ts'
 // hunk a diff Code under a header, with a column of line-number buttons
 // beside the Code: the gutter, where two presses pick a range. Side by side,
 // a hunk is drawn as blocks (core/diff/split.ts), each side of a block its
-// own Code with its own gutter. Only the hunks near the scroll window are drawn; the
-// rest are Boxes of the same height, so the tree keeps the rows
-// core/diff/layout.ts computes and a drawing stays well under the engine's
-// 100,000 characters (research note, findings 4 and 5).
+// own Code with its own gutter.
+//
+// The pane scrolls the diff itself, so the head never moves. The tree is the
+// head, then a window as tall as the room left under it, which shows the diff
+// from row `top` (core/diff/layout.ts counts the rows). The engine's own
+// window never moves: register.tsx answers each wheel tick or scroll key by
+// moving `top`. With 30 body rows, a head of 3 and `top` 100, the window
+// shows diff rows 100 to 126.
+//
+// Only what the window shows is drawn, so a drawing stays far under the
+// engine's 100,000 characters. A hunk the window's top cuts through is drawn
+// from the first line it shows, as a hunk of its own (subHunk), so the engine
+// numbers its lines as before; a wrapped line cut through is pulled up by its
+// rows above the window, which the window clips.
 //
 // Long text wraps and the row count stays exact. A code line is wrapped by
 // the engine, and core/diff/wrap.ts counts its rows by the same rule, so
@@ -46,31 +57,13 @@ export interface PaneActions {
   pick(key: string | null): void
 }
 
-/** Hunk text one drawing may hold. The engine cuts a drawing at 100,000
- * characters; the rest of the tree is small, so this leaves room. */
-export const BUDGET = 80_000
+/** Lines a hunk's slice may run on under the window to reach a line number
+ * as wide as the hunk's widest: at about 50 characters a line, 500 lines
+ * keep a drawing far under the engine's 100,000 characters. */
+const WIDE_REACH = 500
 
 /** Cells the head's text keeps beside the switches before they move under it. */
 const HEAD_ROOM = 20
-
-/** The sticky row's text: the head cut to fit `room` cells, then the fold
- * count after it. The head is padded so the two fill `room` exactly, because the
- * row is painted over the diff, and a cell it leaves out would let the line
- * beneath show through. `stickyRow('working tree · main', '1/3 folded', 40)`
- * gives head `'working tree · main           '` and label `'1/3 folded'`. */
-export function stickyRow(head: string, label: string, room: number): { head: string; label: string } {
-  const space = Math.max(0, room - label.length - 1)
-  const cut = space === 0 ? '' : (wrapWords(head, space)[0] ?? '')
-  const shown = textWidth(cut) > space ? '' : cut
-
-  return { head: shown + ' '.repeat(Math.max(0, room - label.length - textWidth(shown))), label }
-}
-
-/** `text` with spaces after it to fill `width` cells, so a row laid over the
- * diff covers it. */
-function fill(text: string, width: number): string {
-  return text + ' '.repeat(Math.max(0, width - textWidth(text)))
-}
 
 const BADGES: Record<ReviewFile['status'], string> = {
   added: 'A',
@@ -189,6 +182,8 @@ interface SplitPiece {
 
 interface SplitHunk {
   pieces: SplitPiece[]
+  /** Each side's widest number in the whole hunk. */
+  digits: { old: number; new: number }
 }
 
 const SPLIT = new WeakMap<Hunk, { columns: number; split: SplitHunk }>()
@@ -214,7 +209,7 @@ function splitAt(hunk: Hunk, columns: number): SplitHunk {
     return { indexes, source: sideSource(hunk, indexes, which), labelDigits, lineRows, rows }
   }
   const pieces = blocks.map(block => ({ block, old: side(block.left, 'old'), new: side(block.right, 'new') }))
-  const split = { pieces }
+  const split = { pieces, digits }
   SPLIT.set(hunk, { columns, split })
 
   return split
@@ -245,10 +240,13 @@ export function renderPane(
   anchor: Anchor,
   actions: PaneActions,
   view: DiffView = 'unified',
+  top = 0,
 ) {
   const { Box, Text, Button, Code } = $.ui.resolve(e)
 
   if (current === null) {
+    paneWindow.current = null
+
     return (
       <Box flexDirection="column">
         <Text dimColor>Nothing open. Run /explore {'<pr number>'}.</Text>
@@ -281,33 +279,43 @@ export function renderPane(
   const statusRows = wrapWords(statusLine(current), columns)
 
   const sections = []
-  // Whether the tree is taller than the window, so the head can scroll away.
-  let scrollable = false
+  const loading = current.phase === 'open' && diff === null
+  // The diff's room under the head, at least a row, and the window over it:
+  // `offset` is `top` kept inside the diff, `shown` the rows the window takes,
+  // fewer than the room when the whole diff fits.
+  const windowRows = Math.max(1, e.props.scroll.bodyRows - headRows.length - switchRows - statusRows.length - (loading ? 1 : 0))
+  let offset = 0
+  let shown = 0
+  // One blank row under the window while the diff is longer than it, so the
+  // engine has a row to scroll and raises the arrow keys and Home and End
+  // (register.tsx); the engine's window never moves, so it stays out of sight.
+  let spare = false
+  paneWindow.current = null
   if (diff !== null) {
-    const layout = layoutDiff(diff, folded, headRows.length + switchRows + statusRows.length, measureAt(columns, view))
-    scrollable = layout.rows > e.props.scroll.bodyRows
-    // The hunks near the window, in order, until the budget is spent.
-    const sources = new Map<string, string>()
-    let chars = 0
-    for (const slot of hunksNear(layout, e.props.scroll)) {
-      const source =
-        view === 'split'
-          ? splitAt(slot.hunk, columns)
-              .pieces.map(piece => piece.old.source + piece.new.source)
-              .join('')
-          : renderHunk(slot.hunk, { noNewlineNote: false })
-      if (chars + source.length > BUDGET) break
-      chars += source.length
-      sources.set(slot.key, source)
-    }
+    const layout = layoutDiff(diff, folded, 0, measureAt(columns, view))
+    const maxTop = Math.max(0, layout.rows - windowRows)
+    offset = Math.min(Math.max(0, top), maxTop)
+    shown = Math.min(windowRows, layout.rows)
+    spare = layout.rows > windowRows
+    paneWindow.current = { layout, windowRows, maxTop }
+    // Only what the window shows is drawn, each part cut at the window's top.
+    // A wrapped line the top cuts through is pulled up by the rows above it,
+    // at most the head's rows: the terminal drops a drawing pushed above the
+    // screen's first row, and the head's rows are known to be on screen.
+    const end = offset + windowRows
+    const lift = headRows.length + switchRows + statusRows.length
     for (const slot of layout.files) {
+      if (slot.top + slot.rows <= offset) continue
+      if (slot.top >= end) break
       const file = slot.file
       const isFolded = folded.has(file.id)
-      sections.push(
-        <Box key={slot.key} flexDirection="column">
-          <Box flexDirection="row" gap={1}>
+      const headerRows = wrapWords(fileHeader(file), fileHeaderRoom(file, isFolded, columns)).slice(Math.max(0, offset - slot.top))
+      const parts = []
+      if (headerRows.length > 0) {
+        parts.push(
+          <Box key={`fh:${file.id}`} flexDirection="row" gap={1}>
             <Box flexDirection="column" flexGrow={1} flexShrink={1}>
-              {wrapWords(fileHeader(file), fileHeaderRoom(file, isFolded, columns)).map((row, i) => (
+              {headerRows.map((row, i) => (
                 <Text key={`fh:${file.id}:${i}`} bold wrap="truncate-end">
                   {row}
                 </Text>
@@ -317,111 +325,163 @@ export function renderPane(
               <Button key={`file+:${file.id}`} plain dimColor label="+file" onPress={() => actions.addFile(file)} />
             )}
             {file.hunks.length > 0 && (
-              <Button
-                key={`fold:${file.id}`}
-                plain
-                dimColor
-                label={foldLabel(isFolded)}
-                onPress={() => actions.toggleFold(file.id)}
-              />
+              <Button key={`fold:${file.id}`} plain dimColor label={foldLabel(isFolded)} onPress={() => actions.toggleFold(file.id)} />
             )}
-          </Box>
-          {slot.hunks.map(hunkSlot => {
-            const header = renderHunkHeader(hunkSlot.hunk)
-            const source = sources.get(hunkSlot.key)
-            if (source === undefined) {
-              return (
-                <Box key={hunkSlot.key} flexDirection="column" height={hunkSlot.rows}>
-                  <Text dimColor wrap="truncate-end">
-                    {header} · {plural(hunkSlot.hunk.lines.length, 'line')}
-                  </Text>
-                </Box>
-              )
-            }
-            const lines = hunkSlot.hunk.lines
-            const digits = hunkDigits(hunkSlot.hunk)
-            const anchoredRow =
-              anchor !== null && anchor.file === file.path && anchor.hunk === hunkSlot.index ? anchor.row : -1
-
-            return (
-              <Box key={hunkSlot.key} flexDirection="column">
-                <Box flexDirection="row" gap={1}>
-                  <Box flexDirection="column" flexGrow={1} flexShrink={1}>
-                    {wrapWords(header, columns - beside('+hunk')).map((row, i) => (
-                      <Text key={`hh:${hunkSlot.key}:${i}`} dimColor wrap="truncate-end">
-                        {row}
-                      </Text>
-                    ))}
-                  </Box>
-                  <Button
-                    key={`hunk+:${file.id}:${hunkSlot.index}`}
-                    plain
-                    dimColor
-                    label="+hunk"
-                    onPress={() => actions.addHunk(file, hunkSlot.index)}
-                  />
-                </Box>
-                {view === 'split' ? (
-                  <Box flexDirection="column">
-                    {splitAt(hunkSlot.hunk, columns).pieces.map((piece, b) => (
-                      <Box key={`block:${hunkSlot.key}:${b}`} flexDirection="row" gap={1} height={hunkSlot.bodyRows[b] ?? 1}>
-                        {(['old', 'new'] as const).map(which => {
-                          const side = piece[which]
-
-                          return (
-                            <Box key={`side:${which}:${hunkSlot.key}:${b}`} flexDirection="row" width={sideWidth(columns)} flexShrink={0}>
-                              <Box flexDirection="column" flexShrink={0}>
-                                {side.indexes.map((row, i) => (
-                                  <Box key={`gutter:${which}:${file.id}:${hunkSlot.index}:${row}`} height={side.lineRows[i] ?? 1}>
-                                    <Button
-                                      key={`line:${which}:${file.id}:${hunkSlot.index}:${row}`}
-                                      plain
-                                      dimColor={row === anchoredRow ? undefined : true}
-                                      label={gutterLabel(
-                                        lines[row] === undefined ? null : sideNumber(lines[row], which),
-                                        side.labelDigits,
-                                        row === anchoredRow,
-                                      )}
-                                      onPress={() => actions.pressGutter({ file: file.path, hunk: hunkSlot.index, row })}
-                                    />
-                                  </Box>
-                                ))}
-                              </Box>
-                              {side.source !== '' && (
-                                <Box flexGrow={1} flexShrink={1}>
-                                  <Code format="diff" source={side.source} path={file.path} wrap="wrap" />
-                                </Box>
-                              )}
-                            </Box>
-                          )
-                        })}
-                      </Box>
-                    ))}
-                  </Box>
-                ) : (
-                  <Box flexDirection="row">
-                    <Box flexDirection="column" flexShrink={0}>
-                      {lines.map((line, row) => (
-                        <Box key={`gutter:${file.id}:${hunkSlot.index}:${row}`} height={hunkSlot.bodyRows[row] ?? 1}>
-                          <Button
-                            key={`line:${file.id}:${hunkSlot.index}:${row}`}
-                            plain
-                            dimColor={row === anchoredRow ? undefined : true}
-                            label={gutterLabel(rowNumber(line), digits, row === anchoredRow)}
-                            onPress={() => actions.pressGutter({ file: file.path, hunk: hunkSlot.index, row })}
-                          />
-                        </Box>
-                      ))}
-                    </Box>
-                    <Box flexGrow={1} flexShrink={1}>
-                      <Code format="diff" source={source} path={file.path} wrap="wrap" />
-                    </Box>
-                  </Box>
-                )}
-              </Box>
-            )
-          })}
+          </Box>,
+        )
+      }
+      for (const hunkSlot of slot.hunks) {
+        if (hunkSlot.top + hunkSlot.rows <= offset) continue
+        if (hunkSlot.top >= end) break
+        parts.push(drawHunk(file, hunkSlot, offset - hunkSlot.top, end - hunkSlot.top))
+      }
+      // A section keeps its rows: the window clips what runs past its
+      // bottom, where a shrinking section would squeeze the ones above.
+      sections.push(
+        <Box key={slot.key} flexDirection="column" flexShrink={0}>
+          {parts}
         </Box>,
+      )
+    }
+
+    /** One hunk's rows from `from` to `to`, counted from its header's first row. */
+    function drawHunk(file: DiffFile, hunkSlot: HunkSlot, from: number, to: number) {
+      const hunk = hunkSlot.hunk
+      const header = renderHunkHeader(hunk)
+      const headerRows = wrapWords(header, columns - beside('+hunk')).slice(Math.max(0, from))
+      const anchoredRow = anchor !== null && anchor.file === file.path && anchor.hunk === hunkSlot.index ? anchor.row : -1
+      const bodyTo = to - hunkSlot.headerRows
+      const body = cut(hunkSlot.bodyRows, Math.max(0, from - hunkSlot.headerRows), bodyTo)
+      const gutter = (key: string, row: number, rows: number, label: string) => (
+        <Box key={`gutter:${key}`} height={rows}>
+          <Button
+            key={`line:${key}`}
+            plain
+            dimColor={row === anchoredRow ? undefined : true}
+            label={label}
+            onPress={() => actions.pressGutter({ file: file.path, hunk: hunkSlot.index, row })}
+          />
+        </Box>
+      )
+      // Rows clipped to `height`, the first `pulled` of them above its top.
+      const clipped = (key: string, height: number, pulled: number, width: number, inner: RenderElement[]) => (
+        <Box key={key} height={height} width={width} flexShrink={0} overflow="hidden">
+          <Box position="absolute" top={-pulled} left={0} width={width} flexDirection="row">
+            {inner}
+          </Box>
+        </Box>
+      )
+      const rowsOf = (from: number, end: number) => hunkSlot.bodyRows.slice(from, end).reduce((a, n) => a + n, 0)
+
+      let drawnBody: RenderElement | RenderElement[] = []
+      if (body.first < body.end && view === 'split') {
+        const split = splitAt(hunk, columns)
+        drawnBody = split.pieces.slice(body.first, body.end).map((piece, i) => {
+          const b = body.first + i
+          // The window may start inside the first block: each side from its
+          // line at that row, that line's rows above it pulled out of sight,
+          // and up to the row where the window ends.
+          const into = i === 0 ? body.above : 0
+          const blockTop = rowsOf(0, b)
+          const height = Math.min((hunkSlot.bodyRows[b] ?? 1) - into, bodyTo - blockTop - into)
+
+          return (
+            <Box key={`block:${hunkSlot.key}:${b}`} flexDirection="row" gap={1} height={height}>
+              {(['old', 'new'] as const).map(which => {
+                const side = piece[which]
+                const at = cut(side.lineRows, into, into + height)
+                const indexes = side.indexes.slice(at.first, at.end)
+                const source = sideSource(hunk, indexes, which)
+                // The engine pads its numbers to the widest it draws; the label
+                // takes up what a narrower piece leaves, so the code stays put.
+                const labelDigits = 2 * split.digits[which] - sideDigits(hunk, indexes, which)
+                const width = sideWidth(columns)
+
+                return clipped(
+                  `side:${which}:${hunkSlot.key}:${b}`,
+                  height,
+                  Math.min(at.above, lift),
+                  width,
+                  [
+                    <Box key="gutter" flexDirection="column" flexShrink={0}>
+                      {indexes.map((row, k) =>
+                        gutter(
+                          `${which}:${file.id}:${hunkSlot.index}:${row}`,
+                          row,
+                          side.lineRows[at.first + k] ?? 1,
+                          gutterLabel(hunk.lines[row] === undefined ? null : sideNumber(hunk.lines[row], which), labelDigits, row === anchoredRow),
+                        ),
+                      )}
+                    </Box>,
+                    ...(source === ''
+                      ? []
+                      : [
+                          <Box key="code" flexGrow={1} flexShrink={1}>
+                            <Code format="diff" source={source} path={file.path} wrap="wrap" />
+                          </Box>,
+                        ]),
+                  ],
+                )
+              })}
+            </Box>
+          )
+        })
+      } else if (body.first < body.end) {
+        // The engine pads its numbers to the widest it draws, so a slice of
+        // narrower numbers than the hunk's would shift them a cell. The slice
+        // runs on, out of sight under the window, to a line as wide as the
+        // hunk's widest, while that is near; past that the label takes up
+        // the cells the engine's numbers leave, so the code stays put.
+        const widest = hunkDigits(hunk)
+        let end = body.end
+        if (hunkDigits(subHunk(hunk, body.first, end)) < widest) {
+          const wide = hunk.lines.findIndex((line, i) => i >= end && String(rowNumber(line) ?? '').length >= widest)
+          if (wide !== -1 && wide - end < WIDE_REACH) end = wide + 1
+        }
+        const sub = subHunk(hunk, body.first, end)
+        const labelDigits = 2 * widest - hunkDigits(sub)
+        const pulled = Math.min(body.above, lift)
+        drawnBody = clipped(
+          `body:${hunkSlot.key}`,
+          rowsOf(body.first, end) - pulled,
+          pulled,
+          columns,
+          [
+            <Box key="gutter" flexDirection="column" flexShrink={0}>
+              {sub.lines.map((line, k) => {
+                const row = body.first + k
+
+                return gutter(
+                  `${file.id}:${hunkSlot.index}:${row}`,
+                  row,
+                  hunkSlot.bodyRows[row] ?? 1,
+                  gutterLabel(rowNumber(line), labelDigits, row === anchoredRow),
+                )
+              })}
+            </Box>,
+            <Box key="code" flexGrow={1} flexShrink={1}>
+              <Code format="diff" source={renderHunk(sub, { noNewlineNote: false })} path={file.path} wrap="wrap" />
+            </Box>,
+          ],
+        )
+      }
+
+      return (
+        <Box key={hunkSlot.key} flexDirection="column">
+          {headerRows.length > 0 && (
+            <Box key={`hh:${hunkSlot.key}`} flexDirection="row" gap={1}>
+              <Box flexDirection="column" flexGrow={1} flexShrink={1}>
+                {headerRows.map((row, i) => (
+                  <Text key={`hh:${hunkSlot.key}:${i}`} dimColor wrap="truncate-end">
+                    {row}
+                  </Text>
+                ))}
+              </Box>
+              <Button key={`hunk+:${file.id}:${hunkSlot.index}`} plain dimColor label="+hunk" onPress={() => actions.addHunk(file, hunkSlot.index)} />
+            </Box>
+          )}
+          {drawnBody}
+        </Box>
       )
     }
   }
@@ -441,49 +501,6 @@ export function renderPane(
   )
   const count = foldedCount !== '' && <Text dimColor>{foldedCount}</Text>
 
-  // Once the head has scrolled away, a sticky head stands in for it at the
-  // window's top: the head, how many files are folded, and the two switches, beside it or under it as in the head
-  // proper. It is laid over the diff, out of the flow, so the rows the layout counted do not move. Every
-  // cell is written, the gaps as spaces, so no line beneath shows through. At
-  // the top nothing is laid over, and the head shows as drawn.
-  const sticky = () => {
-    const label = foldedCount
-    const row = stickyRow(head, label, switchesBeside ? columns - switchCells - 1 : columns)
-    const gap = (key: string) => <Text key={key}> </Text>
-
-    return (
-      <Box key="sticky" position="absolute" top={e.props.scroll.offset} left={0} width={columns} flexDirection="column">
-        <Box flexDirection="row">
-          <Text bold wrap="truncate-end">
-            {row.head}
-          </Text>
-          <Text dimColor>{row.label}</Text>
-          {switchesBeside && [gap('gap:1'), stickySwitches[0], gap('gap:2'), stickySwitches[1]]}
-        </Box>
-        {!switchesBeside && switchRows <= 1 && (
-          <Box flexDirection="row">
-            {stickySwitches[0]}
-            {gap('gap:2')}
-            {stickySwitches[1]}
-            <Text>{fill('', columns - switchCells)}</Text>
-          </Box>
-        )}
-        {!switchesBeside &&
-          switchRows === 2 &&
-          [viewLabel, switchLabel].map((label, i) => (
-            <Box key={`sticky:${i}`} flexDirection="row">
-              {stickySwitches[i]}
-              <Text>{fill('', columns - label.length)}</Text>
-            </Box>
-          ))}
-      </Box>
-    )
-  }
-  const stickySwitches = [
-    <Button key="sticky:view" plain label={viewLabel} onPress={() => actions.toggleView()} />,
-    <Button key="sticky:commits" plain label={switchLabel} onPress={() => actions.toggleCommits()} />,
-  ]
-
   return (
     <Box flexDirection="column">
       <Box flexDirection="row" gap={1}>
@@ -501,9 +518,13 @@ export function renderPane(
           {row}
         </Text>
       ))}
-      {current.phase === 'open' && diff === null && <Text dimColor>Loading the diff…</Text>}
-      {sections}
-      {scrollable && e.props.scroll.offset > 0 && sticky()}
+      {loading && <Text dimColor>Loading the diff…</Text>}
+      {diff !== null && (
+        <Box key="window" height={shown} flexShrink={0} overflow="hidden" flexDirection="column">
+          {sections}
+        </Box>
+      )}
+      {spare && <Box key="spare" height={1} flexShrink={0} />}
     </Box>
   )
 }
