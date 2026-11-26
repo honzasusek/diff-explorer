@@ -262,27 +262,30 @@ export function renderPane(
   const head = headLine(current)
   const switchLabel = `auto-commit: ${current.commits ? 'on' : 'off'}`
   const viewLabel = `side-by-side: ${view === 'split' ? 'on' : 'off'}`
-  // The switches sit beside the head while it keeps HEAD_ROOM cells; in a
-  // narrower pane they move under it, on one row or, narrower still, two.
-  const switchCells = beside(viewLabel, switchLabel) - 1
-  const switchesBeside = columns - switchCells - 1 >= HEAD_ROOM
-  const switchRows = switchesBeside ? 0 : switchCells <= columns ? 1 : 2
-  const headRows = wrapWords(head, switchesBeside ? columns - switchCells - 1 : columns)
-  const statusRows = wrapWords(statusLine(current), columns)
   const cached = diffCache.current
   const diff = info !== null && cached !== null && cached.key === info.key ? cached.diff : null
   const folded = new Set(files.filter(f => f.folded).map(f => f.id))
+  // Of the files that have hunks to fold, how many are folded: `1/3 folded`.
+  // Empty until the diff has loaded.
+  const foldable = diff === null ? [] : diff.files.filter(file => file.hunks.length > 0)
+  const foldedCount = diff === null ? '' : `${foldable.filter(file => folded.has(file.id)).length}/${foldable.length} folded`
+  // The cells the fold count takes after the head, its gap included.
+  const countCells = foldedCount === '' ? 0 : foldedCount.length + 1
+  // The switches sit beside the head and its fold count while the head keeps
+  // HEAD_ROOM cells; in a narrower pane they move under it, on one row or,
+  // narrower still, two. The fold count stays beside the head either way.
+  const switchCells = beside(viewLabel, switchLabel) - 1
+  const switchesBeside = columns - switchCells - 1 - countCells >= HEAD_ROOM
+  const switchRows = switchesBeside ? 0 : switchCells <= columns ? 1 : 2
+  const headRows = wrapWords(head, (switchesBeside ? columns - switchCells - 1 : columns) - countCells)
+  const statusRows = wrapWords(statusLine(current), columns)
 
   const sections = []
   // Whether the tree is taller than the window, so the head can scroll away.
   let scrollable = false
-  // Of the files that have hunks to fold, how many are folded: `1/3 folded`.
-  let foldedCount = ''
   if (diff !== null) {
     const layout = layoutDiff(diff, folded, headRows.length + switchRows + statusRows.length, measureAt(columns, view))
     scrollable = layout.rows > e.props.scroll.bodyRows
-    const foldable = diff.files.filter(file => file.hunks.length > 0)
-    foldedCount = `${foldable.filter(file => folded.has(file.id)).length}/${foldable.length} folded`
     // The hunks near the window, in order, until the budget is spent.
     const sources = new Map<string, string>()
     let chars = 0
@@ -436,6 +439,7 @@ export function renderPane(
       ))}
     </Box>
   )
+  const count = foldedCount !== '' && <Text dimColor>{foldedCount}</Text>
 
   // Once the head has scrolled away, a sticky head stands in for it at the
   // window's top: the head, how many files are folded, and the two switches, beside it or under it as in the head
@@ -444,8 +448,7 @@ export function renderPane(
   // the top nothing is laid over, and the head shows as drawn.
   const sticky = () => {
     const label = foldedCount
-    const stickyBeside = columns - switchCells - 1 - (label.length + 1) >= HEAD_ROOM
-    const row = stickyRow(head, label, stickyBeside ? columns - switchCells - 1 : columns)
+    const row = stickyRow(head, label, switchesBeside ? columns - switchCells - 1 : columns)
     const gap = (key: string) => <Text key={key}> </Text>
 
     return (
@@ -455,9 +458,9 @@ export function renderPane(
             {row.head}
           </Text>
           <Text dimColor>{row.label}</Text>
-          {stickyBeside && [gap('gap:1'), stickySwitches[0], gap('gap:2'), stickySwitches[1]]}
+          {switchesBeside && [gap('gap:1'), stickySwitches[0], gap('gap:2'), stickySwitches[1]]}
         </Box>
-        {!stickyBeside && switchRows <= 1 && (
+        {!switchesBeside && switchRows <= 1 && (
           <Box flexDirection="row">
             {stickySwitches[0]}
             {gap('gap:2')}
@@ -465,7 +468,7 @@ export function renderPane(
             <Text>{fill('', columns - switchCells)}</Text>
           </Box>
         )}
-        {!stickyBeside &&
+        {!switchesBeside &&
           switchRows === 2 &&
           [viewLabel, switchLabel].map((label, i) => (
             <Box key={`sticky:${i}`} flexDirection="row">
@@ -483,14 +486,11 @@ export function renderPane(
 
   return (
     <Box flexDirection="column">
-      {switchesBeside ? (
-        <Box flexDirection="row" gap={1}>
-          {headText}
-          {switches}
-        </Box>
-      ) : (
-        headText
-      )}
+      <Box flexDirection="row" gap={1}>
+        {headText}
+        {count}
+        {switchesBeside && switches}
+      </Box>
       {!switchesBeside && (
         <Box flexDirection={switchRows === 1 ? 'row' : 'column'} gap={switchRows === 1 ? 1 : 0}>
           {switches}

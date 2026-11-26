@@ -191,8 +191,9 @@ test('a large file starts folded; unfolding draws the hunks near the window and 
   expect(codes).toHaveLength(1)
   expect(String(codes[0]?.props.source).startsWith('@@ -1,0 +1,600 @@')).toBe(true)
   expect(await ui.find({ type: 'Text', text: /^@@ -1000,0 \+1000,600 @@ · 600 lines/ })).toBeDefined()
-  // At the top the head shows as drawn, with no sticky row over it.
+  // At the top the head shows as drawn, its fold count included, with no sticky row over it.
   expect(await ui.find({ type: 'Box', key: 'sticky' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: '0/1 folded' })).toBeDefined()
 
   await ui.redraw({ ...PANE.props, scroll: { offset: 650, bodyRows: 20 } })
   expect(await ui.find({ type: 'Box', key: 'sticky' })).toBeDefined()
@@ -821,9 +822,11 @@ test('a narrow pane wraps long lines: each gutter button is as tall as its line,
     expect(await height(0)).toBe(2)
     expect(await height(3)).toBe(2)
     expect(await height(4)).toBe(1)
-    // The switches move under the head, which takes the full width; the
-    // file header breaks beside its buttons.
-    expect(await ui.find({ type: 'Text', text: /^working tree · head000 →$/ })).toBeDefined()
+    // The switches move under the head, which keeps the fold count beside it
+    // and breaks in the 19 cells left; the file header breaks beside its buttons.
+    expect(await ui.find({ type: 'Text', text: '0/4 folded' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^working tree ·$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^head000 →$/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /^origin\/HEAD$/ })).toBeDefined()
     expect(await ui.find({ key: 'view' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /^src\/payments\/client$/ })).toBeDefined()

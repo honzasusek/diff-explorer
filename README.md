@@ -39,7 +39,7 @@ Requirements: git; the GitHub CLI `gh`, logged in, for pull requests; Claude Cod
 | `/refs` | List the refs waiting for the next prompt; `/refs clear` empties them. |
 | `/revert <path>` | Restore a file Claude edited to its committed version, after a confirmation. |
 
-The pane scrolls with the wheel, or with the arrow keys and PageUp/PageDown once it has the keyboard (click it, or `ctrl+x tab`). Once the head has scrolled away, a sticky head at the top keeps the target, both switches and how many files are folded (`1/3 folded`). A chip press scrolls the pane to its lines; its `[x]` drops it.
+The pane scrolls with the wheel, or with the arrow keys and PageUp/PageDown once it has the keyboard (click it, or `ctrl+x tab`). The head shows how many files are folded (`1/3 folded`) beside the target. Once it has scrolled away, a sticky head at the top keeps the target, the fold count and both switches. A chip press scrolls the pane to its lines; its `[x]` drops it.
 
 ## Options
 
